@@ -106,6 +106,13 @@
     }
     for (let k = 0; k < stmts.length; k++) {
       const st = stmts[k];
+      const mdb = st.match(/^\s*(create|drop)\s+(database|schema)\b/i);
+      if (mdb) return '<code>' + mdb[1].toUpperCase() + ' DATABASE</code> es un comando de <strong>MySQL</strong> y no funciona en esta app, porque aquí la base de datos ya está lista: cada ejercicio te da una <strong>base de datos vacía</strong>.<br>En MySQL Workbench sí lo usarás (<code>CREATE DATABASE libros;</code> y luego <code>USE libros;</code>). Aquí empieza directo con <code>CREATE TABLE</code>.';
+      if (/^\s*use\s+\w+\s*$/i.test(st)) return '<code>USE</code> es un comando de <strong>MySQL</strong> para entrar a una base de datos. En esta app no hace falta: ya estás dentro de una. Sigue con <code>CREATE TABLE</code>.';
+      if (/^\s*show\s+databases\b/i.test(st)) return '<code>SHOW DATABASES</code> es de <strong>MySQL</strong> y no funciona aquí. En esta app trabajas con una sola base de datos a la vez.';
+      if (/^\s*show\s+tables\b/i.test(st)) return '<code>SHOW TABLES</code> es de <strong>MySQL</strong> y no funciona aquí. Para ver tus tablas escribe: <code class="solc">SELECT name FROM sqlite_master WHERE type = \'table\'</code>';
+      const dsc = st.match(/^\s*(?:describe|desc|show\s+columns\s+from)\s+(\w+)\s*$/i);
+      if (dsc) return '<code>DESCRIBE</code> es de <strong>MySQL</strong> y no funciona aquí. Para ver las columnas de una tabla escribe: <code class="solc">SELECT name AS columna, type AS tipo FROM pragma_table_info(\'' + esc(dsc[1]) + '\')</code>';
       let m = st.match(/^\s*create\s+(?:temp\s+|temporary\s+)?table\s+(?:if\s+not\s+exists\s+)?\S+\s*\(/i);
       if (m) {
         const body = st.slice(m[0].length), cut = body.lastIndexOf(')'); if (cut < 0) continue;
