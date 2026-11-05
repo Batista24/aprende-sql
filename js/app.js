@@ -5,6 +5,9 @@
   const L = window.LECCIONES, KW = window.KEYWORDS, SCHEMA = window.SCHEMA;
   const TABLES = Object.keys(SCHEMA);
   const COLS = TABLES.reduce((a, t) => a.concat(SCHEMA[t].filter((c) => a.indexOf(c) < 0)), []);
+  let ACTIVE = null; // esquema de "Mis bases" mientras se ejecuta
+  const tablesNow = () => (ACTIVE ? Object.keys(ACTIVE) : TABLES);
+  const colsNow = () => (ACTIVE ? Object.keys(ACTIVE).reduce((a, t) => a.concat(ACTIVE[t].filter((c) => a.indexOf(c) < 0)), []) : COLS);
   const app = document.getElementById('app');
 
   /* ---------- utilidades ---------- */
@@ -51,7 +54,7 @@
     return noStr.match(/[A-Za-zÁÉÍÓÚáéíóúñÑ_]+/g) || [];
   }
   function suggest(sql) {
-    const known = KW.map((k) => k.toLowerCase()).concat(COLS, Object.keys(SCHEMA));
+    const known = KW.map((k) => k.toLowerCase()).concat(colsNow(), tablesNow());
     const out = [], seen = {};
     const aliasAfterAs = {};
     const w = words(sql);
@@ -76,10 +79,10 @@
   }
   function friendlyError(err, sql, ex) {
     let m = err.match(/no such column: (\S+)/i);
-    if (m) return 'La columna «' + esc(m[1]) + '» no existe. Las columnas son: <strong>' + COLS.join(', ') + '</strong>.';
+    if (m) return 'La columna «' + esc(m[1]) + '» no existe. Las columnas son: <strong>' + colsNow().join(', ') + '</strong>.';
     m = err.match(/no such table: (\S+)/i);
     if (m && ex && ex.verify) return 'La tabla «' + esc(m[1]) + '» todavía no existe. ¿Escribiste el <code>CREATE TABLE</code> con ese nombre, en el mismo bloque?';
-    if (m) return 'La tabla «' + esc(m[1]) + '» no existe. Las tablas son: <strong>' + TABLES.join(', ') + '</strong>.';
+    if (m) return 'La tabla «' + esc(m[1]) + '» no existe. Las tablas son: <strong>' + (tablesNow().join(', ') || 'ninguna todavía')  + '</strong>.';
     if (/FOREIGN KEY constraint failed/i.test(err)) return 'Esa fila está conectada con otra tabla (llave foránea). El valor que pones no existe en la otra tabla, o hay filas que dependen de la que quieres borrar.';
     if (/UNIQUE constraint failed/i.test(err)) return 'Ese valor ya existe y la columna no permite repetidos (<code>PRIMARY KEY</code> o <code>UNIQUE</code>).';
     if (/NOT NULL constraint failed/i.test(err)) return 'Esa columna no puede quedar vacía (<code>NOT NULL</code>). Ponle un valor.';
@@ -246,16 +249,143 @@
   }
 
   function render() {
+    const nav = document.getElementById('bnav');
     if (loadErr) { app.innerHTML = '<div class="msg bad"><strong>No se pudo cargar el motor de bases de datos.</strong><p>' + esc(loadErr) + '</p><p>Recarga la página.</p></div>'; return; }
     if (!SQL) { app.innerHTML = '<p class="loading">Cargando…</p>'; return; }
-    if (route.v === 'home') app.innerHTML = viewHome();
+    if (route.v !== 'db') closeCur();
+    if (route.v === 'lab') app.innerHTML = viewLab();
+    else if (route.v === 'dblist') app.innerHTML = viewDbList();
+    else if (route.v === 'db') app.innerHTML = viewDb(route.dbid);
+    else if (route.v === 'home') app.innerHTML = viewHome();
     else { const l = L.find((x) => x.id === route.id); app.innerHTML = l ? viewLesson(l) : viewHome(); }
+    const sec = route.v === 'lab' ? 'lab' : (route.v === 'dblist' || route.v === 'db') ? 'db' : 'lec';
+    nav.innerHTML = [['lec', '#/', '📚', 'Lecciones'], ['lab', '#/lab', '🧪', 'Laboratorio'], ['db', '#/db', '🗄', 'Mis bases']].map((x) =>
+      '<a href="' + x[1] + '"' + (sec === x[0] ? ' class="on" aria-current="page"' : '') + '><span aria-hidden="true">' + x[2] + '</span>' + x[3] + '</a>').join('');
+  }
+
+  /* ---------- ejecutar SQL libre (Laboratorio y Mis bases) ---------- */
+  function execOn(db, sql) {
+    try {
+      const r = db.exec(sql);
+      return { ok: true, sets: r.map((x) => ({ cols: x.columns, rows: x.values })), changes: db.getRowsModified() };
+    } catch (e) { return { ok: false, err: String(e.message || e) }; }
+  }
+  function freeHtml(r, sql) {
+    if (!r.ok) return resultHtml(r, sql);
+    if (!r.sets.length) return '<div class="msg ok">Se ejecutó sin errores.' + (r.changes ? ' Filas afectadas: <strong>' + r.changes + '</strong>.' : '') + '</div>';
+    return r.sets.map((x, i) => (r.sets.length > 1 ? '<p class="fine">Resultado ' + (i + 1) + ':</p>' : '') + tableHtml(x.cols, x.rows)).join('');
+  }
+  const EJEMPLOS = ['SELECT * FROM estudiantes', 'SELECT nombre, nota FROM estudiantes ORDER BY nota DESC', 'SELECT curso, AVG(nota) FROM estudiantes GROUP BY curso', 'SELECT * FROM materias JOIN profesores ON materias.profesor_id = profesores.id'];
+
+  function viewLab() {
+    const q = P.drafts.lab || '';
+    return '<header class="top"><h1>Laboratorio</h1><p class="sub">Escribe cualquier SQL y míralo funcionar. Usa las tablas de práctica: estudiantes, profesores, materias y notas.</p></header>' +
+      '<div class="msg warn">Aquí <strong>nada se guarda</strong>: cada vez que ejecutas, la base empieza de nuevo. Para guardar tu trabajo usa <a href="#/db">Mis bases</a>.</div>' +
+      tablePreview() +
+      '<textarea class="sql" rows="6" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Escribe aquí tu SQL…" data-ta="lab">' + esc(q) + '</textarea>' +
+      '<div class="row"><button class="btn small main" data-act="labrun">▶ Ejecutar</button><button class="btn small ghost" data-act="labclear">Borrar</button></div>' +
+      '<div class="res" id="labres"></div>' +
+      '<h3 class="mt">Ejemplos para probar</h3><div class="chips">' + EJEMPLOS.map((e, i) => '<button class="btn small ghost chipb" data-act="fill" data-target="lab" data-i="' + i + '">' + esc(e) + '</button>').join('') + '</div>';
+  }
+
+  /* ---------- Mis bases de datos (se guardan en este aparato) ---------- */
+  const DBX = 'aprendesql.dbs';
+  const loadIdx = () => { try { const x = JSON.parse(localStorage.getItem(DBX)); if (Array.isArray(x)) return x; } catch (e) { /* ignorar */ } return []; };
+  const saveIdx = (l) => { try { localStorage.setItem(DBX, JSON.stringify(l)); } catch (e) { /* ignorar */ } };
+  const b64 = (u) => { let t = ''; for (let i = 0; i < u.length; i += 8192) t += String.fromCharCode.apply(null, u.subarray(i, i + 8192)); return btoa(t); };
+  const unb64 = (t) => { const x = atob(t), u = new Uint8Array(x.length); for (let i = 0; i < x.length; i++) u[i] = x.charCodeAt(i); return u; };
+  function openDb(id) {
+    let raw = null; try { raw = localStorage.getItem('aprendesql.db.' + id); } catch (e) { /* ignorar */ }
+    const db = raw ? new SQL.Database(unb64(raw)) : new SQL.Database(); db.run('PRAGMA foreign_keys = ON'); return db;
+  }
+  function snapshot(db) { const u = db.export(); db.run('PRAGMA foreign_keys = ON'); return u; }
+  function persist(id, db) {
+    try { localStorage.setItem('aprendesql.db.' + id, b64(snapshot(db))); return true; } catch (e) { return false; }
+  }
+  let cur = null; // { id, db } base abierta
+  function closeCur() { if (cur) { try { cur.db.close(); } catch (e) { /* ignorar */ } cur = null; } }
+  function schemaOf(db) {
+    const out = {};
+    try {
+      const t = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid");
+      (t.length ? t[0].values : []).forEach((r) => {
+        const c = db.exec("SELECT name, type, pk FROM pragma_table_info('" + r[0].replace(/'/g, "''") + "')");
+        const n = db.exec('SELECT COUNT(*) FROM "' + r[0].replace(/"/g, '""') + '"');
+        out[r[0]] = { cols: c.length ? c[0].values : [], n: n.length ? n[0].values[0][0] : 0 };
+      });
+    } catch (e) { /* ignorar */ }
+    return out;
+  }
+  function tablesPanel(db) {
+    const sc = schemaOf(db), names = Object.keys(sc);
+    if (!names.length) return '<div class="msg warn">Esta base de datos todavía no tiene tablas. Crea la primera con <code>CREATE TABLE</code>. Ejemplo:<code class="solc">CREATE TABLE cursos (id INTEGER PRIMARY KEY, nombre TEXT);</code></div>';
+    return names.map((t) => '<div class="tcard"><div class="th"><b>' + esc(t) + '</b><small>' + sc[t].n + (sc[t].n === 1 ? ' fila' : ' filas') + '</small></div><div class="cols">' +
+      sc[t].cols.map((c) => '<span class="col">' + (c[2] ? '🔑 ' : '') + esc(c[0]) + ' <small>' + esc(c[1] || '') + '</small></span>').join('') + '</div>' +
+      '<button class="btn small ghost" data-act="dbview" data-t="' + esc(t) + '">Ver datos</button></div>').join('');
+  }
+  function activeSchema(db) { const sc = schemaOf(db), o = {}; Object.keys(sc).forEach((t) => { o[t] = sc[t].cols.map((c) => c[0]); }); return o; }
+  const sqlName = (n) => (norm(n).replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'mi_base');
+  function dumpSql(db, name) {
+    const q = (v) => v === null ? 'NULL' : typeof v === 'number' ? String(v) : "'" + String(v).replace(/\\/g, '\\\\').replace(/'/g, "''") + "'";
+    const L2 = ['-- Base de datos "' + name + '" exportada desde "Aprende bases de datos".', '-- Pégala en MySQL Workbench y ejecútala con el rayo.', '',
+      'CREATE DATABASE IF NOT EXISTS ' + sqlName(name) + ';', 'USE ' + sqlName(name) + ';', ''];
+    const t = db.exec("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY rowid");
+    (t.length ? t[0].values : []).forEach((r) => {
+      const ddl = String(r[1]).replace(/INTEGER\s+PRIMARY\s+KEY(\s+AUTOINCREMENT)?/gi, 'INT AUTO_INCREMENT PRIMARY KEY').replace(/\bINTEGER\b/gi, 'INT').replace(/\bTEXT\b/gi, 'VARCHAR(255)');
+      L2.push(ddl + ';');
+      const d = db.exec('SELECT * FROM "' + String(r[0]).replace(/"/g, '""') + '"');
+      if (d.length && d[0].values.length) {
+        L2.push('INSERT INTO ' + r[0] + ' (' + d[0].columns.join(', ') + ') VALUES');
+        L2.push(d[0].values.map((v) => '(' + v.map(q).join(', ') + ')').join(',\n') + ';');
+      }
+      L2.push('');
+    });
+    return L2.join('\n');
+  }
+  function download(name, data, type) {
+    const url = URL.createObjectURL(new Blob([data], { type: type }));
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
+  }
+
+  function viewDbList() {
+    const list = loadIdx();
+    const cards = list.length ? list.map((d) => '<a class="lesson" href="#/db/' + d.id + '"><span class="num">🗄</span><span class="lt"><b>' + esc(d.name) + '</b><small>Creada el ' + esc(d.created || '') + '</small></span></a>').join('') :
+      '<p class="fine">Todavía no tienes ninguna base de datos. Crea la primera aquí abajo.</p>';
+    return '<header class="top"><h1>Mis bases de datos</h1><p class="sub">Aquí creas tus propias bases de datos. Todo lo que hagas se guarda en este aparato y lo puedes usar otro día.</p></header>' +
+      '<section class="list">' + cards + '</section>' +
+      '<section class="ex mt"><h3>Crear una base de datos nueva</h3>' +
+      '<label class="fld"><span>Nombre</span><input class="inp" id="dbname" type="text" maxlength="40" placeholder="Ejemplo: colegio" autocomplete="off"></label>' +
+      '<label class="fld"><span>¿Con qué empieza?</span><select class="inp" id="dbstart"><option value="vacia">Vacía (yo creo las tablas)</option><option value="colegio">Con las tablas del colegio de las lecciones</option></select></label>' +
+      '<button class="btn main" data-act="dbcreate">Crear base de datos</button><div class="res" id="dbmsg"></div></section>' +
+      '<section class="ex"><h3>Traer una que ya tengo</h3><p class="fine">Puedes cargar un archivo <b>.sql</b> (por ejemplo, exportado de MySQL) o un archivo <b>.sqlite</b>.</p>' +
+      '<label class="btn small">Elegir archivo<input type="file" accept=".sql,.sqlite,.db,.txt" data-act-change="dbimport" hidden></label></section>' +
+      '<p class="fine foot">Las bases se guardan solo en este aparato y navegador. Descarga una copia de cada una para no perderla.</p>';
+  }
+
+  function viewDb(id) {
+    const d = loadIdx().find((x) => x.id === id);
+    if (!d) return '<header class="top"><a class="back" href="#/db">← Mis bases</a><h1>No encontrada</h1></header><p>Esa base de datos no existe en este aparato.</p>';
+    if (!cur || cur.id !== id) { closeCur(); cur = { id: id, db: openDb(id) }; }
+    return '<header class="top"><a class="back" href="#/db">← Mis bases</a><h1>' + esc(d.name) + '</h1></header>' +
+      '<div class="msg warn">Aquí los cambios <strong>sí se guardan</strong>. Si te equivocas, toca <b>Deshacer</b> para volver a como estaba antes de la última ejecución.</div>' +
+      '<h3>Mis tablas</h3><div id="dbtables">' + tablesPanel(cur.db) + '</div>' +
+      '<h3 class="mt">Escribe tu SQL</h3><textarea class="sql" rows="7" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Escribe aquí tu SQL…" data-ta="dbq:' + id + '">' + esc(P.drafts['dbq:' + id] || '') + '</textarea>' +
+      '<div class="row"><button class="btn small main" data-act="dbrun">▶ Ejecutar</button><button class="btn small ghost" data-act="dbundo">↩ Deshacer última ejecución</button></div>' +
+      '<div class="res" id="dbres"></div>' +
+      '<section class="ex mt"><h3>Guardar copia y administrar</h3><div class="row">' +
+      '<button class="btn small" data-act="dbdl">⬇ Descargar .sql (para MySQL)</button><button class="btn small" data-act="dbdlq">⬇ Descargar .sqlite</button></div>' +
+      '<div class="row"><button class="btn small ghost" data-act="dbren">Cambiar nombre</button><button class="btn small ghost danger" data-act="dbdel">Borrar esta base</button></div></section>';
   }
 
   /* ---------- eventos ---------- */
   function parseHash() {
-    const m = location.hash.match(/^#\/l\/(\d+)(?:\/(\w+))?/);
-    if (m) { route = { v: 'lesson', id: Number(m[1]), tab: m[2] || 'aprender' }; } else route = { v: 'home', id: 0, tab: 'aprender' };
+    const m = location.hash.match(/^#\/l\/(\d+)(?:\/(\w+))?/), md2 = location.hash.match(/^#\/db\/(\w+)/);
+    if (m) { route = { v: 'lesson', id: Number(m[1]), tab: m[2] || 'aprender' }; }
+    else if (md2) route = { v: 'db', dbid: md2[1] };
+    else if (/^#\/db/.test(location.hash)) route = { v: 'dblist' };
+    else if (/^#\/lab/.test(location.hash)) route = { v: 'lab' };
+    else route = { v: 'home', id: 0, tab: 'aprender' };
     render(); window.scrollTo(0, 0);
   }
   window.addEventListener('hashchange', parseHash);
@@ -276,6 +406,67 @@
       const r = exec(q);
       if (r.ok && r.none && ver) { const r2 = exec(trimSql(q) + ';\n' + ver); box.innerHTML = '<div class="msg ok">Se ejecutó sin errores. Así quedó:</div>' + resultHtml(r2, q); }
       else box.innerHTML = resultHtml(r, q);
+      return;
+    }
+    if (act === 'labrun') {
+      const q = ta('lab').value.trim(), box = document.getElementById('labres');
+      if (!q) { box.innerHTML = '<div class="msg warn">Escribe tu SQL primero.</div>'; return; }
+      const db = makeDb(); const r = execOn(db, q); db.close(); box.innerHTML = freeHtml(r, q); return;
+    }
+    if (act === 'labclear') { ta('lab').value = ''; P.drafts.lab = ''; save(); document.getElementById('labres').innerHTML = ''; return; }
+    if (act === 'fill') { const t = ta(el.dataset.target); t.value = EJEMPLOS[Number(el.dataset.i)]; P.drafts[el.dataset.target] = t.value; save(); t.focus(); return; }
+    if (act === 'dbcreate') {
+      const name = document.getElementById('dbname').value.trim(), msg = document.getElementById('dbmsg');
+      if (!name) { msg.innerHTML = '<div class="msg warn">Escribe un nombre para tu base de datos.</div>'; return; }
+      const id = 'd' + Date.now().toString(36), db = document.getElementById('dbstart').value === 'colegio' ? makeDb() : new SQL.Database();
+      db.run('PRAGMA foreign_keys = ON');
+      if (!persist(id, db)) { db.close(); msg.innerHTML = '<div class="msg bad">No se pudo guardar. Puede que el navegador no deje guardar datos (¿ventana privada?).</div>'; return; }
+      db.close();
+      const l = loadIdx(); l.push({ id: id, name: name, created: new Date().toLocaleDateString('es-DO') }); saveIdx(l);
+      location.hash = '#/db/' + id; return;
+    }
+    if (act === 'dbrun') {
+      const q = ta('dbq:' + cur.id).value.trim(), box = document.getElementById('dbres');
+      if (!q) { box.innerHTML = '<div class="msg warn">Escribe tu SQL primero.</div>'; return; }
+      const readOnly = /^\s*(select|pragma|with|explain)\b/i.test(q) && q.indexOf(';') < 0;
+      if (!readOnly) { try { localStorage.setItem('aprendesql.undo.' + cur.id, b64(snapshot(cur.db))); } catch (e) { /* ignorar */ } }
+      ACTIVE = activeSchema(cur.db); const r = execOn(cur.db, q);
+      box.innerHTML = freeHtml(r, q); ACTIVE = null;
+      if (r.ok && !readOnly && !persist(cur.id, cur.db)) box.innerHTML += '<div class="msg bad">No se pudo guardar el cambio en este aparato.</div>';
+      document.getElementById('dbtables').innerHTML = tablesPanel(cur.db); return;
+    }
+    if (act === 'dbundo') {
+      let raw = null; try { raw = localStorage.getItem('aprendesql.undo.' + cur.id); } catch (e) { /* ignorar */ }
+      const box = document.getElementById('dbres');
+      if (!raw) { box.innerHTML = '<div class="msg warn">No hay nada que deshacer.</div>'; return; }
+      try { cur.db.close(); } catch (e) { /* ignorar */ }
+      cur.db = new SQL.Database(unb64(raw)); cur.db.run('PRAGMA foreign_keys = ON'); persist(cur.id, cur.db);
+      try { localStorage.removeItem('aprendesql.undo.' + cur.id); } catch (e) { /* ignorar */ }
+      box.innerHTML = '<div class="msg ok">Listo: volvió a como estaba antes de la última ejecución.</div>';
+      document.getElementById('dbtables').innerHTML = tablesPanel(cur.db); return;
+    }
+    if (act === 'dbview') {
+      const t = ta('dbq:' + cur.id); t.value = 'SELECT * FROM ' + el.dataset.t; P.drafts['dbq:' + cur.id] = t.value; save();
+      document.getElementById('dbres').innerHTML = freeHtml(execOn(cur.db, t.value), t.value); return;
+    }
+    if (act === 'dbdl' || act === 'dbdlq') {
+      const d = loadIdx().find((x) => x.id === cur.id);
+      if (act === 'dbdl') download(sqlName(d.name) + '.sql', dumpSql(cur.db, d.name), 'text/plain');
+      else { download(sqlName(d.name) + '.sqlite', snapshot(cur.db), 'application/octet-stream'); }
+      return;
+    }
+    if (act === 'dbren') {
+      const l = loadIdx(), d = l.find((x) => x.id === cur.id), n = prompt('Nuevo nombre:', d.name);
+      if (n && n.trim()) { d.name = n.trim().slice(0, 40); saveIdx(l); render(); }
+      return;
+    }
+    if (act === 'dbdel') {
+      const l = loadIdx(), d = l.find((x) => x.id === cur.id);
+      if (confirm('¿Borrar la base de datos "' + d.name + '" y todo lo que tiene? Esto no se puede deshacer.')) {
+        const idd = cur.id; closeCur(); saveIdx(l.filter((x) => x.id !== idd));
+        try { localStorage.removeItem('aprendesql.db.' + idd); localStorage.removeItem('aprendesql.undo.' + idd); } catch (e) { /* ignorar */ }
+        location.hash = '#/db';
+      }
       return;
     }
     if (act === 'copy') {
@@ -317,6 +508,31 @@
       P.notes[l.id] = { text: t, ok: r.ok || !!(P.notes[l.id] && P.notes[l.id].ok) }; save();
       document.getElementById('noteres').innerHTML = r.html;
     }
+  });
+
+  function cleanMysql(t) {
+    return t.replace(/\/\*![\s\S]*?\*\/;?/g, '').replace(/`/g, '').replace(/^\s*(CREATE DATABASE|USE|SET|LOCK TABLES|UNLOCK TABLES)\b[^;]*;/gim, '')
+      .replace(/\)\s*ENGINE\s*=[^;]*;/gi, ');').replace(/\bAUTO_INCREMENT\b(\s*=\s*\d+)?/gi, '').replace(/\bINT(EGER)?\s*(\(\d+\))?\s+(NOT\s+NULL\s+)?PRIMARY\s+KEY/gi, 'INTEGER PRIMARY KEY')
+      .replace(/\bUNSIGNED\b/gi, '');
+  }
+  document.addEventListener('change', (e) => {
+    const el = e.target; if (!el.dataset || el.dataset.actChange !== 'dbimport') return;
+    const f = el.files && el.files[0]; if (!f) return;
+    const name = f.name.replace(/\.[^.]+$/, '').slice(0, 40) || 'importada', msg = document.getElementById('dbmsg');
+    const fin = (db) => {
+      const id = 'd' + Date.now().toString(36); db.run('PRAGMA foreign_keys = ON');
+      if (!persist(id, db)) { db.close(); alert('No se pudo guardar en este aparato.'); return; }
+      db.close(); const l = loadIdx(); l.push({ id: id, name: name, created: new Date().toLocaleDateString('es-DO') }); saveIdx(l); location.hash = '#/db/' + id;
+    };
+    const r = new FileReader();
+    if (/\.(sql|txt)$/i.test(f.name)) {
+      r.onload = () => { const db = new SQL.Database(); try { db.run(cleanMysql(String(r.result))); fin(db); } catch (err) { db.close(); alert('No pude leer ese archivo: ' + (err.message || err) + '\nSi viene de MySQL, puede tener instrucciones que esta app no entiende.'); } };
+      r.readAsText(f);
+    } else {
+      r.onload = () => { try { const db = new SQL.Database(new Uint8Array(r.result)); db.exec('SELECT name FROM sqlite_master'); fin(db); } catch (err) { alert('Ese archivo no es una base de datos válida.'); } };
+      r.readAsArrayBuffer(f);
+    }
+    el.value = '';
   });
 
   function fallbackCopy(t) {
