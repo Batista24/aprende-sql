@@ -348,12 +348,14 @@
     if (route.v === 'lab') app.innerHTML = viewLab();
     else if (route.v === 'mas') app.innerHTML = viewMas();
     else if (route.v === 'cert') app.innerHTML = viewCert();
+    else if (route.v === 'ia') app.innerHTML = window.IA ? window.IA.view() : viewHome();
     else if (route.v === 'dblist') app.innerHTML = viewDbList();
     else if (route.v === 'db') app.innerHTML = viewDb(route.dbid);
     else if (route.v === 'home') app.innerHTML = viewHome();
     else { const l = L.find((x) => x.id === route.id); app.innerHTML = l ? viewLesson(l) : viewHome(); }
     enhanceEditors();
-    const sec = route.v === 'lab' ? 'lab' : (route.v === 'dblist' || route.v === 'db') ? 'db' : (route.v === 'mas' || route.v === 'cert') ? 'mas' : 'lec';
+    if (route.v === 'ia' && window.IA) window.IA.mount(app);
+    const sec = route.v === 'lab' ? 'lab' : (route.v === 'dblist' || route.v === 'db') ? 'db' : (route.v === 'mas' || route.v === 'cert' || route.v === 'ia') ? 'mas' : 'lec';
     nav.innerHTML = [['lec', '#/', '📚', 'Lecciones'], ['lab', '#/lab', '🧪', 'Laboratorio'], ['db', '#/db', '🗄', 'Mis bases'], ['mas', '#/mas', '⚙️', 'Más']].map((x) =>
       '<a href="' + x[1] + '"' + (sec === x[0] ? ' class="on" aria-current="page"' : '') + '><span aria-hidden="true">' + x[2] + '</span>' + x[3] + '</a>').join('');
   }
@@ -407,6 +409,7 @@
       '<section class="ex"><h3>Tu avance</h3><div class="stat"><span>Lecciones</span><b>' + t.lessons + '</b></div><div class="stat"><span>Ejercicios hechos</span><b>' + t.done + ' de ' + t.ex + '</b></div>' +
       '<div class="stat"><span>Lecciones escritas</span><b>' + t.notes + ' de ' + t.lessons + '</b></div><div class="stat"><span>Mis bases de datos</span><b>' + dbs.length + '</b></div>' +
       '<a class="btn go" href="#/certificado">' + (t.complete ? '🎓 Ver mi certificado' : '🎓 Certificado (al terminar el curso)') + '</a></section>' +
+      '<section class="ex"><h3>Asistente IA</h3><p class="fine">Una IA pequeña que responde tus dudas de SQL dentro de tu teléfono, sin internet y gratis. Solo funciona en aparatos nuevos.</p><a class="btn go" href="#/ia">🤖 Abrir el asistente</a></section>' +
       '<section class="ex"><h3>Apariencia</h3><p class="fine">Tema</p>' + seg('theme', PR.theme, [['auto', 'Automático'], ['light', 'Claro'], ['dark', 'Oscuro']]) +
       '<p class="fine">Tamaño de la letra</p>' + seg('size', PR.size, [[1, 'Normal'], [2, 'Grande'], [3, 'Muy grande']]) + '</section>' +
       '<section class="ex"><h3>Copia de seguridad</h3><p class="fine">Guarda en un archivo tu avance, lo que escribiste y todas tus bases de datos. Así no pierdes nada si cambias de aparato o borras los datos del navegador.</p>' +
@@ -699,6 +702,7 @@
     else if (/^#\/lab/.test(location.hash)) route = { v: 'lab' };
     else if (/^#\/mas/.test(location.hash)) route = { v: 'mas' };
     else if (/^#\/certificado/.test(location.hash)) route = { v: 'cert' };
+    else if (/^#\/ia/.test(location.hash)) route = { v: 'ia' };
     else route = { v: 'home', id: 0, tab: 'aprender' };
     render(); window.scrollTo(0, 0);
   }

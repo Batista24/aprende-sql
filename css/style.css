@@ -173,3 +173,10 @@ svg.er { display: block; width: 100%; height: auto; max-width: 560px; margin: 0 
 .seg { display: grid; grid-auto-flow: column; gap: 6px; margin: 4px 0 12px; }
 .seg button { min-height: 44px; border: 2px solid var(--ink); border-radius: 10px; background: var(--card); font-weight: 700; font-size: .9rem; }
 .seg button.on { background: var(--on-bg); color: var(--on-fg); }
+
+.iachat { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+.iab { padding: 10px 12px; border-radius: 12px; max-width: 92%; white-space: pre-wrap; line-height: 1.45; }
+.iab.u { align-self: flex-end; background: var(--on-bg); color: var(--on-fg); }
+.iab.a { align-self: flex-start; background: var(--card); border: 2px solid var(--line); }
+.pbar { height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; margin-top: 8px; }
+.pbar > div { height: 100%; background: var(--teal, #1d7f94); transition: width .3s; }
