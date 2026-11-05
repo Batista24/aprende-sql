@@ -68,6 +68,7 @@
     return sql.replace(/--[^\n]*/g, ' ').replace(/\/\*[\s\S]*?(\*\/|$)/g, ' ').replace(/'(?:[^']|'')*'/g, '0').replace(/"[^"]*"/g, 'x').replace(/`[^`]*`/g, 'x');
   }
   function checkDef(def) {
+    if (/\bauto_increment\b/i.test(def)) return 'La palabra <code>AUTO_INCREMENT</code> es de <strong>MySQL</strong> y aquí no funciona. En esta app el número se pone solo escribiendo <code>id INTEGER PRIMARY KEY</code>. Si usaras <code>INT AUTO_INCREMENT</code> aquí, el id quedaría vacío (NULL).';
     let d = def, prev;
     do { prev = d; d = d.replace(/\([^()]*\)/g, ' '); } while (d !== prev);
     if (/[()]/.test(d)) return null;
@@ -189,7 +190,26 @@
     if (o !== c) out.push('Los paréntesis no están balanceados: abres ' + o + ' y cierras ' + c + '.');
     return out;
   }
+  const FN = { now: ["<code>NOW()</code>", "<code>datetime('now')</code> (fecha y hora) o <code>date('now')</code> (solo la fecha)"], curdate: ["<code>CURDATE()</code>", "<code>date('now')</code>"], year: ["<code>YEAR(fecha)</code>", "<code>strftime('%Y', fecha)</code>"], month: ["<code>MONTH(fecha)</code>", "<code>strftime('%m', fecha)</code>"], day: ["<code>DAY(fecha)</code>", "<code>strftime('%d', fecha)</code>"], date_format: ["<code>DATE_FORMAT</code>", "<code>strftime('%d/%m/%Y', fecha)</code>"], datediff: ["<code>DATEDIFF(a, b)</code>", "<code>julianday(a) - julianday(b)</code>"], left: ["<code>LEFT(texto, n)</code>", "<code>substr(texto, 1, n)</code>"], right: ["<code>RIGHT(texto, n)</code>", "<code>substr(texto, -n)</code>"], rand: ["<code>RAND()</code>", "<code>random()</code>"], stddev: ["<code>STDDEV</code>", 'no existe aquí'], lpad: ["<code>LPAD</code>", 'no existe aquí'], concat_ws: ["<code>CONCAT_WS</code>", "el operador <code>||</code>, por ejemplo <code>nombre || ' ' || ciudad</code>"] };
+  function mysqlHint(err, sql) {
+    const s = stripSql(sql), M = (t) => '<strong>' + t + ' es de MySQL</strong> y no funciona en esta app (que usa SQLite). ';
+    let m = err.match(/no such function: (\w+)/i);
+    if (m) { const f = FN[m[1].toLowerCase()]; return f ? M(f[0]) + 'Aquí usa: ' + f[1] + '.' : 'La función <code>' + esc(m[1]) + '</code> no existe en esta app (que usa SQLite). Puede que sí exista en MySQL.'; }
+    if (!/syntax error|incomplete input|unrecognized token/i.test(err)) return null;
+    if (/\bengine\s*=|\bcharset\s*=|\bcharacter\s+set\b|\bcollate\s*=/i.test(s)) return M('<code>ENGINE=…</code> / <code>CHARSET=…</code>') + 'Son opciones del final del <code>CREATE TABLE</code> en MySQL. Quítalas aquí y funciona.';
+    if (/\bunsigned\b/i.test(s)) return M('<code>UNSIGNED</code>') + 'Quítalo aquí.';
+    if (/\benum\s*\(/i.test(s)) return M('<code>ENUM(...)</code>') + 'Aquí usa <code>TEXT</code>, y si quieres limitar los valores: <code>TEXT CHECK (columna IN (\'a\', \'b\'))</code>.';
+    if (/\balter\s+table\s+\S+\s+(modify|change)\b/i.test(s)) return M('<code>ALTER TABLE … MODIFY / CHANGE</code>') + 'Aquí solo puedes <code>ADD COLUMN</code>, <code>RENAME COLUMN a TO b</code> y <code>DROP COLUMN</code>.';
+    if (/\balter\s+table\s+\S+\s+add\s+(constraint|primary\s+key|unique|foreign\s+key|index|key)\b/i.test(s)) return M('<code>ALTER TABLE … ADD CONSTRAINT / PRIMARY KEY / FOREIGN KEY</code>') + 'Aquí las llaves y restricciones se escriben dentro del <code>CREATE TABLE</code>.';
+    if (/^\s*truncate\b/i.test(s)) return M('<code>TRUNCATE TABLE</code>') + 'Aquí usa <code>DELETE FROM tabla</code>.';
+    if (/on\s+duplicate\s+key/i.test(s)) return M('<code>ON DUPLICATE KEY UPDATE</code>') + 'Aquí usa <code>INSERT OR REPLACE INTO …</code>.';
+    if (/^\s*(update|delete)\b[\s\S]*\b(limit|order\s+by)\b/i.test(s)) return M('<code>UPDATE/DELETE … LIMIT</code> (y <code>ORDER BY</code> en ellos)') + 'Aquí usa <code>WHERE</code> con el id de la fila.';
+    if (/\bdiv\b/i.test(s)) return M('<code>DIV</code>') + 'Aquí, dividir dos enteros con <code>/</code> ya da un entero.';
+    if (/^\s*show\s+create\b/i.test(s)) return M('<code>SHOW CREATE TABLE</code>') + 'Aquí mira <code>SELECT sql FROM sqlite_master WHERE name = \'tabla\'</code>.';
+    return null;
+  }
   function friendlyError(err, sql, ex) {
+    { const mh = mysqlHint(String(err), String(sql || '')); if (mh && err.slice(0, 2) !== '@@') return mh; }
     if (EMPTY) SCRIPTSCH = scriptSchema(sql);
     if (err.slice(0, 2) === '@@') return err.slice(2);
     if (err === 'toolong') return 'Tu SQL es demasiado largo para esta app (máximo ' + SQL_MAX + ' letras).';
@@ -225,7 +245,7 @@
   }
   function resultHtml(r, sql, ex) {
     if (!r.ok) {
-      const fe = friendlyError(r.err, sql, ex), tips = suggest(sql).filter((t) => !(/comilla/.test(t) && /comilla/.test(fe)));
+      const fe = friendlyError(r.err, sql, ex), tips = /es de MySQL|no existe en esta app/.test(fe) ? [] : suggest(sql).filter((t) => !(/comilla/.test(t) && /comilla/.test(fe)));
       return '<div class="msg bad"><strong>Hay un error.</strong><p>' + fe + '</p>' +
         (tips.length ? '<ul>' + tips.map((t) => '<li>' + t + '</li>').join('') + '</ul>' : '') + '</div>';
     }
@@ -449,7 +469,7 @@
       '<div class="row"><button class="btn small main" data-act="bkexport">⬇ Guardar copia de todo</button><label class="btn small">Restaurar copia<input type="file" accept=".json,application/json" data-act-change="bkimport" hidden></label></div><div class="res" id="bkmsg"></div></section>' +
       '<section class="ex"><h3>Borrar</h3><div class="row"><button class="btn small ghost danger" data-act="resetprog">Borrar mi avance</button><button class="btn small ghost danger" data-act="resetall">Borrar todo</button></div>' +
       '<p class="fine">"Borrar mi avance" deja tus bases de datos. "Borrar todo" también las quita.</p></section>' +
-      '<section class="ex"><h3>Acerca de</h3><p class="fine">Aprende bases de datos · curso práctico de SQL con ' + L.length + ' lecciones. Funciona sin internet y todo se guarda en tu aparato, no se envía a ningún servidor. Las consultas se ejecutan con SQLite dentro de tu navegador; lo básico es igual en MySQL y las diferencias se marcan en las lecciones.</p></section>';
+      '<section class="ex"><h3>Acerca de</h3><p class="fine">Aprende bases de datos · curso práctico de SQL con ' + L.length + ' lecciones. Funciona sin internet y todo se guarda en tu aparato, no se envía a ningún servidor. Las consultas se ejecutan con <strong>SQLite</strong> dentro de tu navegador. Lo básico (SELECT, WHERE, JOIN, INSERT, UPDATE, DELETE) se escribe igual que en MySQL, pero hay diferencias reales: están listadas en la lección "MySQL de verdad" y la app avisa cuando escribes algo que solo existe en MySQL.</p></section>';
   }
 
   function viewCert() {

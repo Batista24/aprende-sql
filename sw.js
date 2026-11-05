@@ -1,4 +1,4 @@
-const CACHE = 'aprende-sql-v8';
+const CACHE = 'aprende-sql-v9';
 const FILES = ['./', 'index.html', 'css/style.css', 'js/app.js', 'js/lecciones.js', 'js/lecciones2.js','js/lecciones3.js','js/orden.js','js/voz.js','js/ia.js', 'lib/sql-wasm.js', 'lib/sql-wasm.wasm', 'manifest.webmanifest', 'icons/icon-192.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

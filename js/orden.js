@@ -14,7 +14,7 @@
       { t: 'p', x: 'Así se trabaja en un proyecto real, **siempre en este orden**, y es el mismo orden de este curso:' },
       { t: 'pre', x: '1. Crear la base de datos\n2. Crear las tablas (columnas y tipos de dato)\n3. Poner las llaves y las reglas\n4. Insertar los datos\n5. Consultar los datos\n6. Cambiar y borrar datos cuando haga falta\n7. Relacionar tablas y mejorar el diseño' },
       { t: 'p', x: 'Las instrucciones de SQL se agrupan según lo que hacen: **DDL** define la estructura (`CREATE`, `ALTER`, `DROP`), **DML** maneja los datos (`INSERT`, `UPDATE`, `DELETE`), **DQL** consulta (`SELECT`), **DCL** da permisos (`GRANT`, `REVOKE`) y **TCL** controla transacciones (`COMMIT`, `ROLLBACK`).' },
-      { t: 'p', x: 'Lo primero en **MySQL** es crear la base de datos y entrar a ella. Esto lo escribirás en MySQL Workbench (más adelante verás cómo instalarlo):' },
+      { t: 'p', x: 'Lo primero en **MySQL** es crear la base de datos y entrar a ella. ⚠️ Estos comandos son **solo para MySQL Workbench** (más adelante verás cómo instalarlo). **En esta app dan error, y es normal**, porque aquí no existen:' },
       { t: 'copy', x: 'CREATE DATABASE colegio;\nUSE colegio;\n\n-- Para ver las bases de datos que existen:\nSHOW DATABASES;' },
       { t: 'p', x: 'En esta app no necesitas crear la base: cada ejercicio te da una **base de datos vacía** para que construyas todo desde cero, igual que en un proyecto nuevo. En la siguiente lección creas tus primeras tablas.' }
     ],
@@ -127,6 +127,16 @@
       modelo: 'UPDATE cambia datos que ya existen y DELETE borra filas. El WHERE dice a cuáles filas se aplica. Si se te olvida el WHERE, el cambio o el borrado se aplica a todas las filas de la tabla, por eso hay que tener cuidado.'
     }
   });
+
+  /* ---------- honestidad sobre SQLite vs MySQL ---------- */
+  const l17 = byId(15);
+  l17.aprender[0] = { t: 'p', x: 'Esta app usa **SQLite**, que es un gestor distinto de **MySQL**. Lo básico se escribe igual: `SELECT`, `WHERE`, `ORDER BY`, `GROUP BY`, `JOIN`, `INSERT`, `UPDATE`, `DELETE`, y todos los conceptos (tablas, llaves, relaciones). Pero hay **diferencias reales** que debes conocer:' };
+  l17.aprender.splice(1, 1, { t: 'p', x: '• **Número automático:** aquí `id INTEGER PRIMARY KEY`; en MySQL `id INT AUTO_INCREMENT PRIMARY KEY`. Si aquí escribes `id INT PRIMARY KEY` y no pones el id, queda vacío (NULL); en MySQL da error.' }, { t: 'p', x: '• **Crear y usar la base:** aquí no existe; en MySQL `CREATE DATABASE x;` y `USE x;`.' }, { t: 'p', x: '• **Ver tablas y columnas:** aquí `sqlite_master` y `pragma_table_info`; en MySQL `SHOW TABLES;` y `DESCRIBE tabla;`.' }, { t: 'p', x: '• **Mayúsculas al comparar:** aquí `WHERE ciudad = \'bonao\'` **no** encuentra \'Bonao\'; en MySQL **sí** lo encuentra.' }, { t: 'p', x: '• **División:** aquí `5 / 2` da **2**; en MySQL da **2.5**.' }, { t: 'p', x: '• **Fechas:** aquí `date(\'now\')`, `datetime(\'now\')`, `strftime(...)`; en MySQL `CURDATE()`, `NOW()`, `DATE_FORMAT(...)`.' }, { t: 'p', x: '• **Texto:** aquí `substr(texto, 1, 2)`; en MySQL `LEFT(texto, 2)`.' }, { t: 'p', x: '• **Cambiar una columna:** aquí no existe `ALTER TABLE … MODIFY` ni `CHANGE`; en MySQL sí.' }, { t: 'p', x: '• **Vaciar una tabla:** aquí `DELETE FROM tabla`; en MySQL también `TRUNCATE TABLE tabla`.' }, { t: 'p', x: '• **Opciones de tabla:** `ENGINE=InnoDB`, `CHARSET=…`, `UNSIGNED` y `ENUM` solo existen en MySQL.' }, { t: 'p', x: '• **FULL OUTER JOIN:** aquí funciona; en MySQL **no existe**.' }, { t: 'p', x: '• **Tipos de dato:** aquí son muy flexibles (puedes guardar texto en una columna de enteros); MySQL es estricto.' });
+  l17.ejercicios.push(q('15.6', 'En la base hay una ciudad guardada como **Bonao**. Escribes **WHERE ciudad = \'bonao\'**. ¿Qué pasa?', ['En esta app no encuentra nada, pero en MySQL sí lo encuentra', 'En los dos encuentra la fila', 'En los dos da error', 'En esta app lo encuentra y en MySQL no'], 0, 'SQLite distingue mayúsculas al comparar con =. MySQL, con su configuración normal, no las distingue.'));
+  l17.ejercicios.push(q('15.7', '¿Cuánto da **5 / 2** en esta app (SQLite) y cuánto en MySQL?', ['2 en esta app y 2.5 en MySQL', '2.5 en los dos', '2 en los dos', '2.5 en esta app y 2 en MySQL'], 0, 'SQLite divide enteros y da un entero (2). MySQL da el resultado con decimales (2.5).'));
+  byId(3).aprender.push({ t: 'p', x: '⚠️ **Mayúsculas:** en esta app `WHERE ciudad = \'bonao\'` **no** encuentra \'Bonao\' (distingue mayúsculas). En **MySQL** sí lo encuentra. Escribe el texto igual que está guardado.' });
+  const l4i = l4.aprender.length - 1;
+  l4.aprender[l4i] = { t: 'p', x: '💡 La sintaxis de `INSERT` es la misma en **MySQL**. Lo que cambia es cómo se numera el `id` solo: en MySQL se escribe `INT AUTO_INCREMENT PRIMARY KEY`, y aquí `INTEGER PRIMARY KEY`.' };
 
   /* ---------- orden final y renumeración ---------- */
   const order = [l1, l2, l3, l4, l5, byId(2), byId(3), byId(4), byId(5), byId(6), byId(7), l12, byId(11), byId(12), byId(13), byId(14), byId(15)];
