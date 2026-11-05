@@ -87,23 +87,24 @@
   function chatUi() {
     root.innerHTML = '<div id="iachat" class="iachat" aria-live="polite"></div>' +
       '<div class="row"><button class="btn small ghost chipb" data-ia="q" data-q="¿Qué es un JOIN? Explícamelo fácil.">¿Qué es un JOIN?</button><button class="btn small ghost chipb" data-ia="q" data-q="¿Para qué sirve GROUP BY?">¿Para qué sirve GROUP BY?</button><button class="btn small ghost chipb" data-ia="q" data-q="¿Cuál es la diferencia entre WHERE y HAVING?">WHERE vs HAVING</button></div>' +
-      '<textarea id="iain" class="inp" rows="2" maxlength="500" placeholder="Escribe tu duda de SQL…"></textarea>' +
+      '<textarea id="iain" class="inp" rows="2" maxlength="500" placeholder="Escribe o dicta tu duda de SQL…"></textarea>' +
+      '<div class="row"><button class="btn small ghost" data-voz="mic" data-target="#iain">🎤 Hablar</button>' + (window.VOZ && window.VOZ.canSpeak ? '<label class="fine"><input type="checkbox" data-voz="auto"' + (window.VOZ.auto() ? ' checked' : '') + '> Leer las respuestas en voz alta</label>' : '') + '</div>' +
       '<div class="row"><button class="btn go" data-ia="send">Preguntar</button><button class="btn small ghost" data-ia="stop">Detener</button><button class="btn small ghost danger" data-ia="del">Quitar el modelo del aparato</button></div>';
     history.forEach((m) => addBubble(m.role, m.content));
   }
   function addBubble(role, text) {
     const c = document.getElementById('iachat'); if (!c) return null;
-    const d = document.createElement('div'); d.className = 'iab ' + (role === 'user' ? 'u' : 'a'); d.textContent = text; c.appendChild(d); d.scrollIntoView({ block: 'nearest' }); return d;
+    const d = document.createElement('div'); d.className = 'iab ' + (role === 'user' ? 'u' : 'a'); const sp = document.createElement('span'); sp.textContent = text; d.appendChild(sp); if (role !== 'user' && window.VOZ && window.VOZ.canSpeak) { const bt = document.createElement('button'); bt.className = 'btn small ghost'; bt.dataset.voz = 'bubble'; bt.textContent = '🔊 Escuchar'; d.appendChild(bt); } c.appendChild(d); d.scrollIntoView({ block: 'nearest' }); return d;
   }
   async function ask(text) {
     text = String(text || '').trim().slice(0, 500); if (!text || busy || !engine) return;
-    busy = true; addBubble('user', text); const out = addBubble('assistant', '…'); let acc = '';
+    busy = true; addBubble('user', text); const bub = addBubble('assistant', '…'); const out = bub.firstChild; let acc = '';
     const inp = document.getElementById('iain'); if (inp) inp.value = '';
     try {
       const msgs = [{ role: 'system', content: SYSTEM() }].concat(history.slice(-6), [{ role: 'user', content: text }]);
       const it = await engine.chat.completions.create({ messages: msgs, stream: true, temperature: 0.3, max_tokens: 350 });
       for await (const ch of it) { const t = ch.choices[0] && ch.choices[0].delta && ch.choices[0].delta.content; if (t) { acc += t; out.textContent = acc; out.scrollIntoView({ block: 'nearest' }); } }
-      if (!acc) out.textContent = '(La IA no respondió. Intenta otra vez.)';
+      if (!acc) out.textContent = '(La IA no respondió. Intenta otra vez.)'; else if (window.VOZ && window.VOZ.auto()) window.VOZ.speak(acc);
       history.push({ role: 'user', content: text }, { role: 'assistant', content: acc || '' }); history = history.slice(-12);
     } catch (e) {
       out.textContent = acc ? acc + '\n\n(Se cortó la respuesta.)' : 'No pude responder: ' + explainError(e);

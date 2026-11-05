@@ -307,7 +307,7 @@
     if (route.tab === 'aprender') {
       let ci = 0;
       EXV = []; COPYS = [];
-      body = tablePreview() + l.aprender.map((b) => {
+      body = (window.VOZ && window.VOZ.canSpeak ? '<div class="row"><button class="btn small ghost" data-voz="lesson">🔊 Escuchar la lección</button></div>' : '') + tablePreview() + l.aprender.map((b) => {
         if (b.t === 'p') return '<p>' + md(b.x) + '</p>';
         if (b.t === 'pre') return '<pre class="pre">' + esc(b.x) + '</pre>';
         if (b.t === 'copy') { const j = COPYS.push(b.x) - 1; return '<pre class="pre big">' + esc(b.x) + '</pre><button class="btn small" data-act="copy" data-j="' + j + '">📋 Copiar script</button><p></p>'; }
@@ -332,7 +332,7 @@
     } else {
       const n = P.notes[l.id] || { text: '' };
       body = '<section class="ex"><h3>' + esc(l.escribe.pregunta) + '</h3><textarea class="note" rows="6" data-ta="note" placeholder="Escribe con tus palabras…">' + esc(n.text) + '</textarea>' +
-        '<div class="row"><button class="btn small main" data-act="review">Revisar lo que escribí</button></div><div class="res" id="noteres"></div></section>';
+        '<div class="row"><button class="btn small ghost" data-voz="mic" data-target="[data-ta=note]">🎤 Dictar</button><button class="btn small ghost" data-voz="note">🔊 Escuchar</button><button class="btn small main" data-act="review">Revisar lo que escribí</button></div><div class="res" id="noteres"></div></section>';
     }
     const nav = '<nav class="tabs">' + tabs.map((t) => '<button class="' + (route.tab === t[0] ? 'on' : '') + '" data-act="tab" data-tab="' + t[0] + '">' + t[1] + '</button>').join('') + '</nav>';
     const next = L.find((x) => x.id === l.id + 1);
