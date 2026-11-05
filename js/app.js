@@ -108,7 +108,7 @@
     for (let k = 0; k < stmts.length; k++) {
       const st = stmts[k];
       const mdb = st.match(/^\s*(create|drop)\s+(database|schema)\b/i);
-      if (mdb) return '<code>' + mdb[1].toUpperCase() + ' DATABASE</code> es un comando de <strong>MySQL</strong> y no funciona en esta app, porque aquí la base de datos ya está lista: cada ejercicio te da una <strong>base de datos vacía</strong>.<br>En MySQL Workbench sí lo usarás (<code>CREATE DATABASE libros;</code> y luego <code>USE libros;</code>). Aquí empieza directo con <code>CREATE TABLE</code>.';
+      if (mdb) return '<code>' + mdb[1].toUpperCase() + ' DATABASE</code> es un comando de <strong>MySQL</strong> y no funciona en esta app. En SQLite la base de datos también existe, pero es un <strong>archivo</strong> que se crea al abrirlo, no con un comando SQL. Aquí cada ejercicio ya te da una <strong>base de datos vacía</strong> (y en <em>Mis bases</em> creas las tuyas).<br>En MySQL Workbench sí lo usarás (<code>CREATE DATABASE libros;</code> y luego <code>USE libros;</code>). Aquí empieza con <code>CREATE TABLE</code>.';
       if (/^\s*use\s+\w+\s*$/i.test(st)) return '<code>USE</code> es un comando de <strong>MySQL</strong> para entrar a una base de datos. En esta app no hace falta: ya estás dentro de una. Sigue con <code>CREATE TABLE</code>.';
       if (/^\s*show\s+databases\b/i.test(st)) return '<code>SHOW DATABASES</code> es de <strong>MySQL</strong> y no funciona aquí. En esta app trabajas con una sola base de datos a la vez.';
       if (/^\s*show\s+tables\b/i.test(st)) return '<code>SHOW TABLES</code> es de <strong>MySQL</strong> y no funciona aquí. Para ver tus tablas escribe: <code class="solc">SELECT name FROM sqlite_master WHERE type = \'table\'</code>';
