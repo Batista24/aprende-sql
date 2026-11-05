@@ -6,7 +6,7 @@
   const TABLES = Object.keys(SCHEMA);
   const COLS = TABLES.reduce((a, t) => a.concat(SCHEMA[t].filter((c) => a.indexOf(c) < 0)), []);
   let ACTIVE = null; // esquema de "Mis bases" mientras se ejecuta
-  let EMPTY = false, SCRIPTSCH = {}; // lecciones con base vacía: el esquema sale de lo que el estudiante escribe
+  let EMPTY = false, SESS = null, SCRIPTSCH = {}; // lecciones con base vacía: el esquema sale de lo que el estudiante escribe
   const tablesNow = () => (ACTIVE ? Object.keys(ACTIVE) : EMPTY ? Object.keys(SCRIPTSCH) : TABLES);
   const colsOfSch = (o) => Object.keys(o).reduce((a, t) => a.concat(o[t].filter((c) => a.indexOf(c) < 0)), []);
   const colsNow = () => (ACTIVE ? colsOfSch(ACTIVE) : EMPTY ? colsOfSch(SCRIPTSCH) : COLS);
@@ -108,9 +108,9 @@
     for (let k = 0; k < stmts.length; k++) {
       const st = stmts[k];
       const mdb = st.match(/^\s*(create|drop)\s+(database|schema)\b/i);
-      if (mdb) return '<code>' + mdb[1].toUpperCase() + ' DATABASE</code> es un comando de <strong>MySQL</strong> y no funciona en esta app. En SQLite la base de datos también existe, pero es un <strong>archivo</strong> que se crea al abrirlo, no con un comando SQL. Aquí cada ejercicio ya te da una <strong>base de datos vacía</strong> (y en <em>Mis bases</em> creas las tuyas).<br>En MySQL Workbench sí lo usarás (<code>CREATE DATABASE libros;</code> y luego <code>USE libros;</code>). Aquí empieza con <code>CREATE TABLE</code>.';
-      if (/^\s*use\s+\w+\s*$/i.test(st)) return '<code>USE</code> es un comando de <strong>MySQL</strong> para entrar a una base de datos. En esta app no hace falta: ya estás dentro de una. Sigue con <code>CREATE TABLE</code>.';
-      if (/^\s*show\s+databases\b/i.test(st)) return '<code>SHOW DATABASES</code> es de <strong>MySQL</strong> y no funciona aquí. En esta app trabajas con una sola base de datos a la vez.';
+      if (mdb) return '<code>' + mdb[1].toUpperCase() + ' DATABASE</code> no funciona en el Laboratorio ni en Mis bases:'+' Aquí ya estás dentro de una base de datos de práctica. Estos comandos funcionan en la <strong>Lección 1</strong>, donde sí practicas crear y usar bases.';
+      if (/^\s*use\s+\w+\s*$/i.test(st)) return '<code>USE</code> no funciona en el Laboratorio ni en Mis bases:'+' Aquí ya estás dentro de una base de datos de práctica. Estos comandos funcionan en la <strong>Lección 1</strong>, donde sí practicas crear y usar bases.';
+      if (/^\s*show\s+databases\b/i.test(st)) return '<code>SHOW DATABASES</code> no funciona en el Laboratorio ni en Mis bases:'+' Aquí ya estás dentro de una base de datos de práctica. Estos comandos funcionan en la <strong>Lección 1</strong>, donde sí practicas crear y usar bases.';
       if (/^\s*show\s+tables\b/i.test(st)) return '<code>SHOW TABLES</code> es de <strong>MySQL</strong> y no funciona aquí. Para ver tus tablas escribe: <code class="solc">SELECT name FROM sqlite_master WHERE type = \'table\'</code>';
       const dsc = st.match(/^\s*(?:describe|desc|show\s+columns\s+from)\s+(\w+)\s*$/i);
       if (dsc) return '<code>DESCRIBE</code> es de <strong>MySQL</strong> y no funciona aquí. Para ver las columnas de una tabla escribe: <code class="solc">SELECT name AS columna, type AS tipo FROM pragma_table_info(\'' + esc(dsc[1]) + '\')</code>';
@@ -149,8 +149,84 @@
       return { ok: true, sets: sets, changes: changes };
     } catch (e) { return { ok: false, err: String(e && e.message || e) }; }
   }
+
+  function setMode(l) { const b = l && l.base; EMPTY = b === 'vacia' || b === 'servidor'; SESS = b === 'servidor' ? 'srv' : b === 'vacia' ? 'auto' : null; }
+  /* ---------- simulación del servidor MySQL: CREATE/DROP DATABASE, USE, SHOW, DESCRIBE ---------- */
+  function splitStmts(sql) {
+    const out = []; let cur = '', q = null, i = 0;
+    while (i < sql.length) {
+      const c = sql[i], n = sql[i + 1];
+      if (q) { cur += c; if (c === q) q = null; i++; continue; }
+      if (c === "'" || c === '"' || c === '`') { q = c; cur += c; i++; continue; }
+      if (c === '-' && n === '-') { while (i < sql.length && sql[i] !== '\n') i++; continue; }
+      if (c === '/' && n === '*') { const e = sql.indexOf('*/', i + 2); i = e < 0 ? sql.length : e + 2; cur += ' '; continue; }
+      if (c === ';') { if (cur.trim()) out.push(cur.trim()); cur = ''; i++; continue; }
+      cur += c; i++;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return out;
+  }
+  const SYSDB = ['information_schema', 'mysql', 'performance_schema', 'sys'];
+  const dbName = (t) => String(t).replace(/^`|`$/g, '');
+  function execSess(sql) {
+    const dbs = {}, order = []; let cur = null, scratch = null, changes = 0, last = null;
+    const open = () => { const d = new SQL.Database(); d.run('PRAGMA foreign_keys = ON'); return d; };
+    const fail = (m) => ({ ok: false, err: '@@' + m });
+    const NM = '(`[^`]+`|[A-Za-z_][\\w$]*)';
+    try {
+      if (SESS === 'auto') { dbs.mi_base = { name: 'mi_base', db: open() }; order.push('mi_base'); cur = 'mi_base'; }
+      if (String(sql).length > SQL_MAX) return { ok: false, err: 'toolong' };
+      const list = splitStmts(sql); let m;
+      for (const st of list) {
+        if ((m = st.match(new RegExp('^create\\s+(?:database|schema)\\s+(if\\s+not\\s+exists\\s+)?' + NM + '\\s*((?:default\\s+)?(?:character\\s+set|charset|collate)\\b[\\w\\s=\\-]*)?$', 'i')))) {
+          const n = dbName(m[2]), k = n.toLowerCase();
+          if (dbs[k] || SYSDB.indexOf(k) >= 0) { if (m[1]) continue; return fail('No se puede crear la base de datos <code>' + esc(n) + '</code> porque <strong>ya existe</strong>. <span class="fine">(MySQL: ERROR 1007)</span> Usa otro nombre o escribe <code>CREATE DATABASE IF NOT EXISTS ' + esc(n) + ';</code>'); }
+          dbs[k] = { name: n, db: open() }; order.push(k); changes++; continue;
+        }
+        if (/^create\s+(database|schema)\b/i.test(st)) return fail('Revisa la forma de <code>CREATE DATABASE</code>. Es: <code class="solc">CREATE DATABASE nombre;</code> (una sola palabra, sin espacios).');
+        if ((m = st.match(new RegExp('^drop\\s+(?:database|schema)\\s+(if\\s+exists\\s+)?' + NM + '$', 'i')))) {
+          const n = dbName(m[2]), k = n.toLowerCase();
+          if (!dbs[k]) { if (m[1]) continue; return fail('No se puede borrar <code>' + esc(n) + '</code> porque <strong>no existe</strong>. <span class="fine">(MySQL: ERROR 1008)</span>'); }
+          dbs[k].db.close(); delete dbs[k]; order.splice(order.indexOf(k), 1); if (cur === k) cur = null; changes++; continue;
+        }
+        if (/^drop\s+(database|schema)\b/i.test(st)) return fail('Revisa la forma de <code>DROP DATABASE</code>. Es: <code class="solc">DROP DATABASE nombre;</code>');
+        if ((m = st.match(new RegExp('^use\\s+' + NM + '$', 'i')))) {
+          const n = dbName(m[1]), k = n.toLowerCase();
+          if (!dbs[k]) return fail('No existe una base de datos llamada <code>' + esc(n) + '</code>. <span class="fine">(MySQL: ERROR 1049 Unknown database)</span> Créala primero con <code class="solc">CREATE DATABASE ' + esc(n) + ';</code>' + (SYSDB.indexOf(k) >= 0 ? '' : ' o revisa cómo la escribiste.'));
+          cur = k; continue;
+        }
+        if (/^show\s+(databases|schemas)\s*$/i.test(st)) { last = { cols: ['Database'], rows: SYSDB.slice().concat(order.map((k) => dbs[k].name)).sort((a, b) => a.toLowerCase() < b.toLowerCase() ? -1 : 1).map((x) => [x]) }; continue; }
+        if (/^select\s+(?:database|schema)\s*\(\s*\)\s*$/i.test(st)) { last = { cols: ['DATABASE()'], rows: [[cur ? dbs[cur].name : null]] }; continue; }
+        const need = 'No hay ninguna base de datos seleccionada. <span class="fine">(MySQL: ERROR 1046 No database selected)</span> Primero escribe <code class="solc">USE nombre_de_tu_base;</code>';
+        if (/^show\s+tables\s*$/i.test(st)) {
+          if (!cur) return fail(need);
+          const t = dbs[cur].db.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name");
+          last = { cols: ['Tables_in_' + dbs[cur].name], rows: t.length ? t[0].values : [] }; continue;
+        }
+        if ((m = st.match(new RegExp('^(?:describe|desc|show\\s+columns\\s+from|explain)\\s+' + NM + '$', 'i')))) {
+          if (!cur) return fail(need);
+          const t = dbName(m[1]);
+          const r = dbs[cur].db.exec("SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('" + t.replace(/'/g, "''") + "')");
+          if (!r.length) return fail('La tabla <code>' + esc(dbs[cur].name) + '.' + esc(t) + '</code> no existe. <span class="fine">(MySQL: ERROR 1146)</span> Mira tus tablas con <code>SHOW TABLES;</code>');
+          last = { cols: ['Field', 'Type', 'Null', 'Key', 'Default', 'Extra'], rows: r[0].values.map((v) => [v[0], String(v[1] || '').toLowerCase(), v[2] || v[4] ? 'NO' : 'YES', v[4] ? 'PRI' : '', v[3] === null ? null : v[3], '']) }; continue;
+        }
+        let db;
+        if (cur) db = dbs[cur].db;
+        else if (/^select\b/i.test(st) && !/\bfrom\b/i.test(stripSql(st))) db = scratch || (scratch = open());
+        else return fail(need);
+        const r = runSql(db, st, 5000);
+        if (!r.ok) return r;
+        changes += r.changes;
+        if (r.sets.length) last = r.sets[r.sets.length - 1];
+      }
+      if (!last) return { ok: true, none: true, changes: changes };
+      return { ok: true, cols: last.cols, rows: last.rows, capped: !!last.capped };
+    } catch (e) { return { ok: false, err: String(e && e.message || e) }; }
+    finally { order.forEach((k) => { try { dbs[k].db.close(); } catch (x) {} }); if (scratch) scratch.close(); }
+  }
   function exec(sql) {
     let db; if (EMPTY) SCRIPTSCH = scriptSchema(sql);
+    if (SESS) return execSess(sql);
     try {
       db = makeDb();
       const r = runSql(db, sql, 5000);
@@ -259,8 +335,8 @@
   const trimSql = (q) => q.replace(/[\s;]+$/, '');
   const lessonOfEx = (ex) => L.find((l) => l.ejercicios.indexOf(ex) >= 0);
   function check(ex, sql) {
-    const prev = EMPTY, l = lessonOfEx(ex); EMPTY = !!(l && l.base === 'vacia');
-    try { return checkInner(ex, sql); } finally { EMPTY = prev; }
+    const prev = EMPTY, ps = SESS, l = lessonOfEx(ex); setMode(l);
+    try { return checkInner(ex, sql); } finally { EMPTY = prev; SESS = ps; }
   }
   function checkInner(ex, sql) {
     const verify = !!ex.verify;
@@ -393,7 +469,7 @@
   }
 
   function render() {
-    { const lz = route.v === 'lesson' ? L.find((x) => x.id === route.id) : null; EMPTY = !!(lz && lz.base === 'vacia'); }
+    { const lz = route.v === 'lesson' ? L.find((x) => x.id === route.id) : null; setMode(lz); }
     const nav = document.getElementById('bnav');
     if (loadErr) { app.innerHTML = '<div class="msg bad"><strong>No se pudo cargar el motor de bases de datos.</strong><p>' + esc(loadErr) + '</p><p>Recarga la página.</p></div>'; return; }
     if (!SQL) { app.innerHTML = '<p class="loading">Cargando…</p>'; return; }
