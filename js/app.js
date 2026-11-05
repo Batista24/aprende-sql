@@ -6,8 +6,25 @@
   const TABLES = Object.keys(SCHEMA);
   const COLS = TABLES.reduce((a, t) => a.concat(SCHEMA[t].filter((c) => a.indexOf(c) < 0)), []);
   let ACTIVE = null; // esquema de "Mis bases" mientras se ejecuta
-  const tablesNow = () => (ACTIVE ? Object.keys(ACTIVE) : TABLES);
-  const colsNow = () => (ACTIVE ? Object.keys(ACTIVE).reduce((a, t) => a.concat(ACTIVE[t].filter((c) => a.indexOf(c) < 0)), []) : COLS);
+  let EMPTY = false, SCRIPTSCH = {}; // lecciones con base vacía: el esquema sale de lo que el estudiante escribe
+  const tablesNow = () => (ACTIVE ? Object.keys(ACTIVE) : EMPTY ? Object.keys(SCRIPTSCH) : TABLES);
+  const colsOfSch = (o) => Object.keys(o).reduce((a, t) => a.concat(o[t].filter((c) => a.indexOf(c) < 0)), []);
+  const colsNow = () => (ACTIVE ? colsOfSch(ACTIVE) : EMPTY ? colsOfSch(SCRIPTSCH) : COLS);
+  function scriptSchema(sql) {
+    const out = {}, st = String(sql).replace(/--[^\n]*/g, ' ').replace(/'(?:[^']|'')*'/g, '0');
+    const re = /create\s+(?:temp\s+)?table\s+(?:if\s+not\s+exists\s+)?(\w+)\s*\(/gi; let m;
+    while ((m = re.exec(st))) {
+      let depth = 1, i = re.lastIndex, cur = '', cols = [];
+      for (; i < st.length && depth > 0; i++) {
+        const ch = st[i];
+        if (ch === '(') depth++; else if (ch === ')') { depth--; if (depth === 0) break; }
+        if (ch === ',' && depth === 1) { cols.push(cur); cur = ''; } else cur += ch;
+      }
+      cols.push(cur);
+      out[m[1]] = cols.map((c) => c.trim().split(/\s+/)[0]).filter((c) => c && !/^(primary|foreign|unique|check|constraint|key)$/i.test(c));
+    }
+    return out;
+  }
   const app = document.getElementById('app');
 
   /* ---------- utilidades ---------- */
@@ -28,15 +45,15 @@
 
   /* ---------- progreso ---------- */
   function load() {
-    try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.done) return s; } catch (e) { /* ignorar */ }
-    return { done: {}, drafts: {}, notes: {} };
+    try { const s = JSON.parse(localStorage.getItem(KEY)); if (s && s.done && s.v === 2) return s; } catch (e) { /* ignorar */ }
+    return { done: {}, drafts: {}, notes: {}, hist: {}, v: 2 };
   }
   let P = load();
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(P)); } catch (e) { /* ignorar */ } };
 
   /* ---------- base de datos (sql.js) ---------- */
   let SQL = null, loadErr = '';
-  function makeDb() { const db = new SQL.Database(); db.run(window.SEED); db.run('PRAGMA foreign_keys = ON'); return db; }
+  function makeDb(full) { const db = new SQL.Database(); if (full || !EMPTY) db.run(window.SEED); db.run('PRAGMA foreign_keys = ON'); return db; }
   const ROW_CAP = 1000, SQL_MAX = 20000;
   /* ---------- revisión previa: errores que SQLite deja pasar pero MySQL no ---------- */
   const TYPES = ['INT', 'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT', 'MEDIUMINT', 'TEXT', 'TINYTEXT', 'MEDIUMTEXT', 'LONGTEXT', 'VARCHAR', 'CHAR', 'CHARACTER', 'NCHAR', 'NVARCHAR', 'DECIMAL', 'NUMERIC', 'REAL', 'FLOAT', 'DOUBLE', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'YEAR', 'BOOLEAN', 'BOOL', 'BLOB', 'BIT', 'ENUM', 'JSON', 'BINARY', 'VARBINARY', 'CLOB'];
@@ -125,7 +142,7 @@
     } catch (e) { return { ok: false, err: String(e && e.message || e) }; }
   }
   function exec(sql) {
-    let db;
+    let db; if (EMPTY) SCRIPTSCH = scriptSchema(sql);
     try {
       db = makeDb();
       const r = runSql(db, sql, 5000);
@@ -166,6 +183,7 @@
     return out;
   }
   function friendlyError(err, sql, ex) {
+    if (EMPTY) SCRIPTSCH = scriptSchema(sql);
     if (err.slice(0, 2) === '@@') return err.slice(2);
     if (err === 'toolong') return 'Tu SQL es demasiado largo para esta app (máximo ' + SQL_MAX + ' letras).';
     let m = err.match(/no such column: (\S+)/i);
@@ -212,7 +230,12 @@
   const normVal = (v) => typeof v === 'number' ? Math.round(v * 10000) / 10000 : v;
   const rowKey = (r) => JSON.stringify(r.map(normVal));
   const trimSql = (q) => q.replace(/[\s;]+$/, '');
+  const lessonOfEx = (ex) => L.find((l) => l.ejercicios.indexOf(ex) >= 0);
   function check(ex, sql) {
+    const prev = EMPTY, l = lessonOfEx(ex); EMPTY = !!(l && l.base === 'vacia');
+    try { return checkInner(ex, sql); } finally { EMPTY = prev; }
+  }
+  function checkInner(ex, sql) {
     const verify = !!ex.verify;
     let u = exec(verify ? trimSql(sql) + ';\n' + ex.verify : sql);
     if (!u.ok) return { html: resultHtml(u, sql, ex), good: false };
@@ -220,7 +243,7 @@
     if (u.none) return { html: resultHtml(u, sql, ex), good: false };
     let e = exec(verify ? trimSql(ex.sol) + ';\n' + ex.verify : ex.sol);
     if (e.none) e = { ok: true, cols: [], rows: [] };
-    const ordered = /order\s+by/i.test(ex.sol), names = /\sas\s/i.test(ex.sol);
+    const ordered = /order\s+by/i.test(ex.sol), names = ex.names === true || /\sas\s/i.test(ex.sol);
     const table = (verify ? '<p class="fine">Así quedó:</p>' : '') + tableHtml(u.cols, u.rows);
     const bad = (t, extra) => ({ good: false, html: '<div class="msg bad"><strong>Casi. ' + t + '</strong>' + (extra ? '<p>' + extra + '</p>' : '') + '</div>' + table });
     const miss = (ex.must || []).filter((m) => !m[0].test(sql)).map((m) => m[1]);
@@ -228,6 +251,7 @@
     const a = u.rows.map(rowKey), b = e.rows.map(rowKey);
     const sameSet = a.length === b.length && a.slice().sort().join('|') === b.slice().sort().join('|');
     if (verify) {
+      if (ex.names === true && u.cols.map((c) => c.toLowerCase()).join() !== e.cols.map((c) => c.toLowerCase()).join()) return bad('Los nombres de las columnas no son los que pide el ejercicio.', 'Revisa cómo escribiste los nombres al crear la tabla. Deben ser: <strong>' + esc(e.cols.join(', ')) + '</strong>.');
       if (!sameSet) return bad('Lo que hiciste no coincide con lo que pide el ejercicio.', (/pragma|sqlite_master/i.test(ex.verify) ? 'Revisa los nombres de las tablas y columnas, los tipos y las restricciones que pide el ejercicio.' : 'Revisa si te falta o te sobra algo, por ejemplo un <code>WHERE</code>.') + ' Toca <strong>Ejecutar</strong> para ver cómo quedó y compara.');
       return { good: true, html: '<div class="msg ok"><strong>¡Correcto!</strong></div>' + table };
     }
@@ -296,6 +320,7 @@
   }
 
   function tablePreview() {
+    if (EMPTY) return '';
     const body = TABLES.map((t) => { const r = exec('SELECT * FROM ' + t); return '<h4 class="tn">Tabla ' + t + '</h4>' + tableHtml(r.cols, r.rows); }).join('');
     return '<details class="peek"><summary>Ver las tablas con las que practicas</summary><h4 class="tn">Diagrama</h4>' + practiceDiagram() + body + '</details>';
   }
@@ -341,6 +366,7 @@
   }
 
   function render() {
+    { const lz = route.v === 'lesson' ? L.find((x) => x.id === route.id) : null; EMPTY = !!(lz && lz.base === 'vacia'); }
     const nav = document.getElementById('bnav');
     if (loadErr) { app.innerHTML = '<div class="msg bad"><strong>No se pudo cargar el motor de bases de datos.</strong><p>' + esc(loadErr) + '</p><p>Recarga la página.</p></div>'; return; }
     if (!SQL) { app.innerHTML = '<p class="loading">Cargando…</p>'; return; }
@@ -439,7 +465,8 @@
     let b; try { b = JSON.parse(text); } catch (e) { return { ok: false, msg: 'El archivo no es una copia válida (no se pudo leer).' }; }
     if (!b || b.app !== 'aprende-sql' || !b.progress || typeof b.progress !== 'object') return { ok: false, msg: 'Ese archivo no es una copia de esta app.' };
     const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
-    const prog = { done: {}, drafts: {}, notes: {}, hist: {} };
+    const prog = { done: {}, drafts: {}, notes: {}, hist: {}, v: 2 };
+    const oldProg = b.progress.v !== 2;
     if (isObj(b.progress.done)) Object.keys(b.progress.done).filter((k) => k !== '__proto__').forEach((k) => { if (b.progress.done[k] === true) prog.done[k] = true; });
     if (isObj(b.progress.drafts)) Object.keys(b.progress.drafts).filter((k) => k !== '__proto__').forEach((k) => { if (typeof b.progress.drafts[k] === 'string') prog.drafts[k] = b.progress.drafts[k].slice(0, SQL_MAX); });
     if (isObj(b.progress.notes)) Object.keys(b.progress.notes).filter((k) => k !== '__proto__').forEach((k) => { const n = b.progress.notes[k]; if (isObj(n) && typeof n.text === 'string') prog.notes[k] = { text: n.text.slice(0, 5000), ok: n.ok === true }; });
@@ -451,10 +478,10 @@
       try { localStorage.setItem('aprendesql.db.' + d.id, d.data); } catch (e) { badDbs++; return; }
       idx.push({ id: d.id, name: d.name.slice(0, 40), created: typeof d.created === 'string' ? d.created.slice(0, 30) : '' }); okDbs++;
     });
-    P = prog; save();
+    if (!oldProg) { P = prog; save(); }
     if (idx.length) { const old = loadIdx().filter((o) => !idx.some((n) => n.id === o.id)); saveIdx(old.concat(idx)); }
     if (isObj(b.prefs)) { PR = Object.assign(PR, loadPrefsFrom(b.prefs)); savePrefs(); applyPrefs(); }
-    return { ok: true, msg: 'Copia restaurada: avance y ' + okDbs + (okDbs === 1 ? ' base de datos' : ' bases de datos') + (badDbs ? ' (' + badDbs + ' no se pudieron leer)' : '') + '.' };
+    return { ok: true, msg: 'Copia restaurada: ' + (oldProg ? 'el avance era de una versión anterior del curso y no se pudo usar, y ' : 'avance y ') + okDbs + (okDbs === 1 ? ' base de datos' : ' bases de datos') + (badDbs ? ' (' + badDbs + ' no se pudieron leer)' : '') + '.' };
   }
   function loadPrefsFrom(x) { return { theme: ['auto', 'light', 'dark'].indexOf(x.theme) >= 0 ? x.theme : 'auto', size: [1, 2, 3].indexOf(x.size) >= 0 ? x.size : 1, name: typeof x.name === 'string' ? x.name.slice(0, 60) : '' }; }
 
@@ -612,7 +639,7 @@
   }
   let practiceDiag = null;
   function practiceDiagram() {
-    if (!practiceDiag) { const db = makeDb(); practiceDiag = diagramHtml(modelOf(db)); db.close(); }
+    if (!practiceDiag) { const db = makeDb(true); practiceDiag = diagramHtml(modelOf(db)); db.close(); }
     return practiceDiag;
   }
 
@@ -733,13 +760,13 @@
       document.getElementById('bkmsg').innerHTML = '<div class="msg ok">Copia guardada. Revisa tu carpeta de descargas.</div>'; return;
     }
     if (act === 'resetprog') {
-      if (confirm('¿Borrar todo tu avance, lo que escribiste y el historial? Tus bases de datos no se tocan.')) { P = { done: {}, drafts: {}, notes: {}, hist: {} }; save(); render(); }
+      if (confirm('¿Borrar todo tu avance, lo que escribiste y el historial? Tus bases de datos no se tocan.')) { P = { done: {}, drafts: {}, notes: {}, hist: {}, v: 2 }; save(); render(); }
       return;
     }
     if (act === 'resetall') {
       if (confirm('¿Borrar TODO: avance y todas tus bases de datos? Esto no se puede deshacer.')) {
         loadIdx().forEach((d) => { try { localStorage.removeItem('aprendesql.db.' + d.id); localStorage.removeItem('aprendesql.undo.' + d.id); } catch (e) { /* ignorar */ } });
-        saveIdx([]); P = { done: {}, drafts: {}, notes: {}, hist: {} }; save(); render();
+        saveIdx([]); P = { done: {}, drafts: {}, notes: {}, hist: {}, v: 2 }; save(); render();
       }
       return;
     }
