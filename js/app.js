@@ -53,7 +53,7 @@
 
   /* ---------- base de datos (sql.js) ---------- */
   let SQL = null, loadErr = '';
-  function makeDb(full) { const db = new SQL.Database(); if (full || !EMPTY) db.run(window.SEED); db.run('PRAGMA foreign_keys = ON'); return db; }
+  function makeDb(full) { const db = new SQL.Database(); if (full || !EMPTY) db.run(mysql2sqlite(window.SEED)); db.run('PRAGMA foreign_keys = ON'); return db; }
   const ROW_CAP = 1000, SQL_MAX = 20000;
   /* ---------- revisión previa: errores que SQLite deja pasar pero MySQL no ---------- */
   const TYPES = ['INT', 'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT', 'MEDIUMINT', 'TEXT', 'TINYTEXT', 'MEDIUMTEXT', 'LONGTEXT', 'VARCHAR', 'CHAR', 'CHARACTER', 'NCHAR', 'NVARCHAR', 'DECIMAL', 'NUMERIC', 'REAL', 'FLOAT', 'DOUBLE', 'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'YEAR', 'BOOLEAN', 'BOOL', 'BLOB', 'BIT', 'ENUM', 'JSON', 'BINARY', 'VARBINARY', 'CLOB'];
@@ -133,8 +133,50 @@
     return null;
   }
 
+
+  /* ---------- traductor: el estudiante escribe MySQL, por dentro se ejecuta en SQLite ---------- */
+  function mysql2sqlite(sql) {
+    const keep = [];
+    let t = String(sql).replace(/'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*"|`[^`]*`|--[^\n]*|\/\*[\s\S]*?\*\//g, (m) => {
+      if (m[0] === '-' || m[0] === '/') return m; // comentarios se quedan igual
+      if (m[0] === '"' && !/^"(?:[^"\\]|\\.|"")*"$/.test(m)) return m;
+      keep.push(m); return '\u0001' + (keep.length - 1) + '\u0001';
+    });
+    const INTT = '(?:TINYINT|SMALLINT|MEDIUMINT|BIGINT|INTEGER|INT)\\s*(?:\\(\\d+\\))?';
+    const ID = '(\\u0001\\d+\\u0001|[A-Za-z_][\\w$]*)';
+    // AUTO_INCREMENT -> INTEGER PRIMARY KEY (y se quita la llave de tabla repetida)
+    const ai = [];
+    const colAI = (m, name) => { ai.push(name); return name + ' INTEGER PRIMARY KEY'; };
+    t = t.replace(new RegExp(ID + '\\s+' + INTT + '(?:\\s+UNSIGNED)?(?:\\s+NOT\\s+NULL)?(?:\\s+PRIMARY\\s+KEY)?\\s+AUTO_INCREMENT(?:\\s+NOT\\s+NULL)?(?:\\s+PRIMARY\\s+KEY|\\s+KEY)?', 'gi'), colAI);
+    ai.forEach((name) => { t = t.replace(new RegExp(',\\s*PRIMARY\\s+KEY\\s*\\(\\s*' + name.replace(/[$]/g, '\\$') + '\\s*\\)', 'i'), ''); });
+    t = t.replace(/\)\s*(?:(?:DEFAULT\s+)?(?:ENGINE|CHARSET|CHARACTER\s+SET|COLLATE|ROW_FORMAT|AUTO_INCREMENT)\s*=?\s*\w+\s*)+(?=;|$)/gi, ')');
+    t = t.replace(/\bAUTO_INCREMENT\b(\s*=\s*\d+)?/gi, '');
+    t = t.replace(/\b(?:CHARACTER\s+SET|CHARSET)\s+\w+/gi, '').replace(/\bCOLLATE\s+(?:utf8\w*|latin1\w*)/gi, '');
+    t = t.replace(new RegExp(ID + '\\s+ENUM\\s*\\(([^)]*)\\)', 'gi'), '$1 TEXT CHECK ($1 IN ($2))');
+    t = t.replace(/\bINSERT\s+IGNORE\b/gi, 'INSERT OR IGNORE');
+    t = t.replace(/^(\s*)TRUNCATE\s+(?:TABLE\s+)?(\S+)\s*$/gim, '$1DELETE FROM $2');
+    // MySQL compara textos sin distinguir mayúsculas: las columnas de texto se crean con COLLATE NOCASE
+    t = t.split(';').map((st) => /^\s*(?:create\s+(?:temp\w*\s+)?table|alter\s+table)\b/i.test(st)
+      ? st.replace(/([\w\u0001$]\s+)((?:VARCHAR|NVARCHAR|CHAR|NCHAR)\s*\(\s*\d+\s*\)|CHARACTER\s*\(\s*\d+\s*\)|(?:TINY|MEDIUM|LONG)?TEXT\b)(?!\s*COLLATE)/gi, '$1$2 COLLATE NOCASE') : st).join(';');
+    // funciones
+    const call = (name, fn) => {
+      const re = new RegExp('\\b' + name + '\\s*\\(', 'i'); let g = 0;
+      for (let m; (m = re.exec(t)) && g++ < 200;) {
+        let d = 1, i = m.index + m[0].length, a = [], cur = '';
+        for (; i < t.length && d > 0; i++) { const c = t[i]; if (c === '(') d++; else if (c === ')') { d--; if (d === 0) break; } if (c === ',' && d === 1) { a.push(cur); cur = ''; } else cur += c; }
+        if (d > 0) break; a.push(cur);
+        t = t.slice(0, m.index) + fn(a.map((x) => x.trim())) + t.slice(i + 1);
+      }
+    };
+    call('CONCAT', (a) => a.length ? '(' + a.join(' || ') + ')' : "''");
+    call('NOW', () => "datetime('now','localtime')"); call('CURDATE', () => "date('now','localtime')"); call('CURTIME', () => "time('now','localtime')");
+    call('YEAR', (a) => "CAST(strftime('%Y', " + a[0] + ') AS INTEGER)'); call('MONTH', (a) => "CAST(strftime('%m', " + a[0] + ') AS INTEGER)'); call('DAY', (a) => "CAST(strftime('%d', " + a[0] + ') AS INTEGER)');
+    call('IF', (a) => 'IIF(' + a.join(', ') + ')'); call('LEFT', (a) => 'substr(' + a[0] + ', 1, ' + a[1] + ')'); call('RIGHT', (a) => 'substr(' + a[0] + ', -(' + a[1] + '))');
+    return t.replace(/\u0001(\d+)\u0001/g, (m, n) => keep[+n]);
+  }
   function runSql(db, sql, cap) {
     if (String(sql).length > SQL_MAX) return { ok: false, err: 'toolong' };
+    sql = mysql2sqlite(sql);
     const pre = preCheck(String(sql)); if (pre) return { ok: false, err: '@@' + pre };
     const sets = []; let changes = 0;
     try {
@@ -208,7 +250,7 @@
           const t = dbName(m[1]);
           const r = dbs[cur].db.exec("SELECT name, type, \"notnull\", dflt_value, pk FROM pragma_table_info('" + t.replace(/'/g, "''") + "')");
           if (!r.length) return fail('La tabla <code>' + esc(dbs[cur].name) + '.' + esc(t) + '</code> no existe. <span class="fine">(MySQL: ERROR 1146)</span> Mira tus tablas con <code>SHOW TABLES;</code>');
-          last = { cols: ['Field', 'Type', 'Null', 'Key', 'Default', 'Extra'], rows: r[0].values.map((v) => [v[0], String(v[1] || '').toLowerCase(), v[2] || v[4] ? 'NO' : 'YES', v[4] ? 'PRI' : '', v[3] === null ? null : v[3], '']) }; continue;
+          last = { cols: ['Field', 'Type', 'Null', 'Key', 'Default', 'Extra'], rows: r[0].values.map((v) => { const ty = String(v[1] || '').toLowerCase(); const ai = v[4] && ty === 'integer'; return [v[0], ty === 'integer' ? 'int' : ty, v[2] || v[4] ? 'NO' : 'YES', v[4] ? 'PRI' : '', v[3] === null ? null : v[3], ai ? 'auto_increment' : '']; }) }; continue;
         }
         let db;
         if (cur) db = dbs[cur].db;
@@ -317,7 +359,7 @@
     const fmt = (v) => v === null ? '<i>NULL</i>' : esc(typeof v === 'number' && !Number.isInteger(v) ? Math.round(v * 10000) / 10000 : v);
     return '<div class="tw"><table><thead><tr>' + cols.map((c) => '<th>' + esc(c) + '</th>').join('') + '</tr></thead><tbody>' +
       shown.map((r) => '<tr>' + r.map((v) => '<td>' + fmt(v) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>' +
-      '<p class="fine">' + rows.length + (rows.length === 1 ? ' fila' : ' filas') + (rows.length > 60 ? ' (se muestran 60)' : '') + '</p>';
+      '<p class="fine">' + rows.length + ' row(s) returned' + (rows.length > 60 ? ' (se muestran 60)' : '') + '</p>';
   }
   function resultHtml(r, sql, ex) {
     if (!r.ok) {
@@ -325,7 +367,7 @@
       return '<div class="msg bad"><strong>Hay un error.</strong><p>' + fe + '</p>' +
         (tips.length ? '<ul>' + tips.map((t) => '<li>' + t + '</li>').join('') + '</ul>' : '') + '</div>';
     }
-    if (r.none) return '<div class="msg ok">Se ejecutó sin errores. Esa instrucción no muestra una tabla; usa un <code>SELECT</code> para ver cómo quedó.</div>';
+    if (r.none) return '<div class="msg ok"><strong>' + (r.changes || 0) + ' row(s) affected.</strong> Se ejecutó sin errores. Esa instrucción no muestra una tabla; usa un <code>SELECT</code> para ver cómo quedó.</div>';
     return tableHtml(r.cols, r.rows);
   }
 
