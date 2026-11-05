@@ -106,3 +106,11 @@ tbody tr:nth-child(even) { background: #f7f5ee; }
 td i { color: var(--soft); }
 @media (max-width: 380px) { body { font-size: 17px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+.part { font-size: 1.05rem; color: var(--teal); margin: 18px 2px 4px; border-bottom: 2px solid var(--teal); padding-bottom: 2px; }
+.part:first-child { margin-top: 0; }
+.pre { background: var(--code-bg); color: var(--code-ink); font: .85rem/1.5 var(--mono); border-radius: 12px; padding: 12px; overflow-x: auto; margin: 0 0 12px; white-space: pre; }
+.pre.big { max-height: 320px; overflow: auto; margin-bottom: 8px; }
+.opts { display: grid; gap: 8px; }
+.btn.opt { justify-content: flex-start; text-align: left; font-family: var(--mono); font-size: .92rem; font-weight: 600; }
+.tn { margin: 10px 0 4px; font-family: var(--serif); font-size: 1rem; }

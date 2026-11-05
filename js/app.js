@@ -3,7 +3,8 @@
   'use strict';
   const KEY = 'aprendesql.v1';
   const L = window.LECCIONES, KW = window.KEYWORDS, SCHEMA = window.SCHEMA;
-  const COLS = SCHEMA.estudiantes;
+  const TABLES = Object.keys(SCHEMA);
+  const COLS = TABLES.reduce((a, t) => a.concat(SCHEMA[t].filter((c) => a.indexOf(c) < 0)), []);
   const app = document.getElementById('app');
 
   /* ---------- utilidades ---------- */
@@ -32,7 +33,7 @@
 
   /* ---------- base de datos (sql.js) ---------- */
   let SQL = null, loadErr = '';
-  function makeDb() { const db = new SQL.Database(); db.run(window.SEED); return db; }
+  function makeDb() { const db = new SQL.Database(); db.run(window.SEED); db.run('PRAGMA foreign_keys = ON'); return db; }
   function exec(sql) {
     let db;
     try {
@@ -73,11 +74,18 @@
     if (o !== c) out.push('Los paréntesis no están balanceados: abres ' + o + ' y cierras ' + c + '.');
     return out;
   }
-  function friendlyError(err, sql) {
+  function friendlyError(err, sql, ex) {
     let m = err.match(/no such column: (\S+)/i);
     if (m) return 'La columna «' + esc(m[1]) + '» no existe. Las columnas son: <strong>' + COLS.join(', ') + '</strong>.';
     m = err.match(/no such table: (\S+)/i);
-    if (m) return 'La tabla «' + esc(m[1]) + '» no existe. Aquí la tabla se llama <strong>estudiantes</strong>.';
+    if (m && ex && ex.verify) return 'La tabla «' + esc(m[1]) + '» todavía no existe. ¿Escribiste el <code>CREATE TABLE</code> con ese nombre, en el mismo bloque?';
+    if (m) return 'La tabla «' + esc(m[1]) + '» no existe. Las tablas son: <strong>' + TABLES.join(', ') + '</strong>.';
+    if (/FOREIGN KEY constraint failed/i.test(err)) return 'Esa fila está conectada con otra tabla (llave foránea). El valor que pones no existe en la otra tabla, o hay filas que dependen de la que quieres borrar.';
+    if (/UNIQUE constraint failed/i.test(err)) return 'Ese valor ya existe y la columna no permite repetidos (<code>PRIMARY KEY</code> o <code>UNIQUE</code>).';
+    if (/NOT NULL constraint failed/i.test(err)) return 'Esa columna no puede quedar vacía (<code>NOT NULL</code>). Ponle un valor.';
+    if (/already exists/i.test(err)) return 'Esa tabla ya existe. Si quieres, bórrala primero con <code>DROP TABLE</code>.';
+    if (/duplicate column/i.test(err)) return 'Esa columna ya existe en la tabla.';
+    if (/values for \d+ columns|has \d+ columns but \d+ values/i.test(err)) return 'La cantidad de valores no coincide con la cantidad de columnas. Cuéntalos.';
     m = err.match(/unrecognized token: "(.*)"/i);
     if (m && m[1].charAt(0) === "'") return 'Falta cerrar una comilla simple. El texto va entre comillas: <code>\'Bonao\'</code>.';
     if (m && /^\d/.test(m[1])) return '«' + esc(m[1]) + '» es texto, así que va entre comillas simples: <code>\'' + esc(m[1]) + '\'</code>.';
@@ -97,27 +105,37 @@
       shown.map((r) => '<tr>' + r.map((v) => '<td>' + fmt(v) + '</td>').join('') + '</tr>').join('') + '</tbody></table></div>' +
       '<p class="fine">' + rows.length + (rows.length === 1 ? ' fila' : ' filas') + (rows.length > 60 ? ' (se muestran 60)' : '') + '</p>';
   }
-  function resultHtml(r, sql) {
+  function resultHtml(r, sql, ex) {
     if (!r.ok) {
-      const fe = friendlyError(r.err, sql), tips = suggest(sql).filter((t) => !(/comilla/.test(t) && /comilla/.test(fe)));
+      const fe = friendlyError(r.err, sql, ex), tips = suggest(sql).filter((t) => !(/comilla/.test(t) && /comilla/.test(fe)));
       return '<div class="msg bad"><strong>Hay un error.</strong><p>' + fe + '</p>' +
         (tips.length ? '<ul>' + tips.map((t) => '<li>' + t + '</li>').join('') + '</ul>' : '') + '</div>';
     }
-    if (r.none) return '<div class="msg warn">La consulta corrió pero no devolvió una tabla. Aquí empezamos con <code>SELECT</code>.</div>';
+    if (r.none) return '<div class="msg ok">Se ejecutó sin errores. Esa instrucción no muestra una tabla; usa un <code>SELECT</code> para ver cómo quedó.</div>';
     return tableHtml(r.cols, r.rows);
   }
 
   /* ---------- revisar un ejercicio ---------- */
   const normVal = (v) => typeof v === 'number' ? Math.round(v * 10000) / 10000 : v;
   const rowKey = (r) => JSON.stringify(r.map(normVal));
+  const trimSql = (q) => q.replace(/[\s;]+$/, '');
   function check(ex, sql) {
-    const u = exec(sql);
-    if (!u.ok) return { html: resultHtml(u, sql), good: false };
-    if (u.none) return { html: resultHtml(u, sql), good: false };
-    const e = exec(ex.sol);
+    const verify = !!ex.verify;
+    let u = exec(verify ? trimSql(sql) + ';\n' + ex.verify : sql);
+    if (!u.ok) return { html: resultHtml(u, sql, ex), good: false };
+    if (u.none && verify) u = { ok: true, cols: ['(no se encontró nada)'], rows: [] };
+    if (u.none) return { html: resultHtml(u, sql, ex), good: false };
+    let e = exec(verify ? trimSql(ex.sol) + ';\n' + ex.verify : ex.sol);
+    if (e.none) e = { ok: true, cols: [], rows: [] };
     const ordered = /order\s+by/i.test(ex.sol), names = /\sas\s/i.test(ex.sol);
-    const table = tableHtml(u.cols, u.rows);
+    const table = (verify ? '<p class="fine">Así quedó:</p>' : '') + tableHtml(u.cols, u.rows);
     const bad = (t, extra) => ({ good: false, html: '<div class="msg bad"><strong>Casi. ' + t + '</strong>' + (extra ? '<p>' + extra + '</p>' : '') + '</div>' + table });
+    const a = u.rows.map(rowKey), b = e.rows.map(rowKey);
+    const sameSet = a.length === b.length && a.slice().sort().join('|') === b.slice().sort().join('|');
+    if (verify) {
+      if (!sameSet) return bad('Lo que hiciste no coincide con lo que pide el ejercicio.', (/pragma|sqlite_master/i.test(ex.verify) ? 'Revisa los nombres de las tablas y columnas, los tipos y las restricciones que pide el ejercicio.' : 'Revisa si te falta o te sobra algo, por ejemplo un <code>WHERE</code>.') + ' Toca <strong>Ejecutar</strong> para ver cómo quedó y compara.');
+      return { good: true, html: '<div class="msg ok"><strong>¡Correcto!</strong></div>' + table };
+    }
     if (u.cols.length !== e.cols.length) {
       return bad(u.cols.length < e.cols.length ? 'Te faltan columnas.' : 'Tienes columnas de más.',
         'Pediste ' + u.cols.length + ' y el ejercicio pide ' + e.cols.length + '. Revisa qué columnas pide el ejercicio.');
@@ -127,12 +145,10 @@
     }
     if (u.rows.length !== e.rows.length) {
       return bad('Salieron ' + u.rows.length + ' filas y deberían ser ' + e.rows.length + '.',
-        u.rows.length > e.rows.length ? 'Salen filas de más: revisa tu condición <code>WHERE</code> o el <code>LIMIT</code>.' : 'Salen menos filas de las que pide el ejercicio: tu condición puede ser muy estricta.');
+        u.rows.length > e.rows.length ? 'Salen filas de más: revisa tu condición <code>WHERE</code>, el <code>JOIN</code> o el <code>LIMIT</code>.' : 'Salen menos filas de las que pide el ejercicio: tu condición o tu <code>JOIN</code> pueden ser muy estrictos.');
     }
-    const a = u.rows.map(rowKey), b = e.rows.map(rowKey);
-    const same = ordered ? a.join('|') === b.join('|') : a.slice().sort().join('|') === b.slice().sort().join('|');
+    const same = ordered ? a.join('|') === b.join('|') : sameSet;
     if (!same) {
-      const sameSet = a.slice().sort().join('|') === b.slice().sort().join('|');
       return bad(sameSet ? 'Los datos son los correctos, pero el orden no.' : 'Los datos no coinciden con lo que pide el ejercicio.',
         sameSet ? 'Revisa el <code>ORDER BY</code> y si va <code>ASC</code> o <code>DESC</code>.' : 'Lee otra vez el ejercicio: revisa las columnas y la condición.');
     }
@@ -165,14 +181,16 @@
   /* ---------- pantallas ---------- */
   const lessonStats = (l) => ({ done: l.ejercicios.filter((e) => P.done[e.id]).length, total: l.ejercicios.length, note: !!(P.notes[l.id] && P.notes[l.id].ok) });
   let route = { v: 'home', id: 0, tab: 'aprender' };
+  let EXV = [], COPYS = [];
 
   function viewHome() {
     let totalD = 0, totalT = 0;
     const cards = L.map((l) => {
+      const part = window.PARTES && window.PARTES[l.id] ? '<h2 class="part">' + esc(window.PARTES[l.id]) + '</h2>' : '';
       const s = lessonStats(l); totalD += s.done; totalT += s.total;
       const pct = Math.round(100 * s.done / s.total);
       const done = s.done === s.total && s.note;
-      return '<a class="lesson' + (done ? ' fin' : '') + '" href="#/l/' + l.id + '"><span class="num">' + (done ? '✓' : l.id) + '</span><span class="lt"><b>' + esc(l.titulo) + '</b><small>' + esc(l.resumen) + '</small>' +
+      return part + '<a class="lesson' + (done ? ' fin' : '') + '" href="#/l/' + l.id + '"><span class="num">' + (done ? '✓' : l.id) + '</span><span class="lt"><b>' + esc(l.titulo) + '</b><small>' + esc(l.resumen) + '</small>' +
         '<span class="bar"><i style="width:' + pct + '%"></i></span><small>' + s.done + ' de ' + s.total + ' ejercicios' + (s.note ? ' · escrito ✓' : '') + '</small></span></a>';
     }).join('');
     const next = L.find((l) => { const s = lessonStats(l); return s.done < s.total || !s.note; });
@@ -183,8 +201,8 @@
   }
 
   function tablePreview() {
-    const r = exec('SELECT * FROM estudiantes');
-    return '<details class="peek"><summary>Ver la tabla <b>estudiantes</b> (los datos con los que practicas)</summary>' + tableHtml(r.cols, r.rows) + '</details>';
+    const body = TABLES.map((t) => { const r = exec('SELECT * FROM ' + t); return '<h4 class="tn">Tabla ' + t + '</h4>' + tableHtml(r.cols, r.rows); }).join('');
+    return '<details class="peek"><summary>Ver las tablas con las que practicas</summary>' + body + '</details>';
   }
 
   function viewLesson(l) {
@@ -193,18 +211,25 @@
     let body = '';
     if (route.tab === 'aprender') {
       let ci = 0;
+      EXV = []; COPYS = [];
       body = tablePreview() + l.aprender.map((b) => {
         if (b.t === 'p') return '<p>' + md(b.x) + '</p>';
-        const i = ci++;
-        return '<div class="try"><textarea class="sql" rows="2" spellcheck="false" autocapitalize="off" autocorrect="off" data-ta="ex' + i + '">' + esc(b.sql) + '</textarea>' +
+        if (b.t === 'pre') return '<pre class="pre">' + esc(b.x) + '</pre>';
+        if (b.t === 'copy') { const j = COPYS.push(b.x) - 1; return '<pre class="pre big">' + esc(b.x) + '</pre><button class="btn small" data-act="copy" data-j="' + j + '">📋 Copiar script</button><p></p>'; }
+        const i = ci++; EXV[i] = b.ver || '';
+        return '<div class="try"><textarea class="sql" rows="' + Math.min(8, Math.max(2, b.sql.split('\n').length)) + '" spellcheck="false" autocapitalize="off" autocorrect="off" data-ta="ex' + i + '">' + esc(b.sql) + '</textarea>' +
           '<button class="btn small" data-act="runex" data-i="' + i + '">▶ Ejecutar</button><div id="exres' + i + '" class="res"></div></div>';
       }).join('') + '<button class="btn go" data-act="tab" data-tab="practica">Ir a practicar →</button>';
     } else if (route.tab === 'practica') {
-      body = tablePreview() + '<p class="fine">Escribe la consulta, toca <b>Revisar</b> y te digo si está bien. Puedes pedir una pista cuando quieras.</p>' +
+      body = tablePreview() + '<p class="fine">Escribe tu respuesta, toca <b>Revisar</b> y te digo si está bien. Puedes pedir una pista cuando quieras.</p>' +
         l.ejercicios.map((e, k) => {
           const d = P.done[e.id], draft = P.drafts[e.id] || '';
+          if (e.q) {
+            return '<section class="ex' + (d ? ' done' : '') + '" id="ex-' + e.id.replace('.', '-') + '"><h3><span class="chk">' + (d ? '✓' : (k + 1)) + '</span> ' + md(e.texto) + '</h3><div class="opts">' +
+              e.q.opts.map((o, j) => '<button class="btn opt" data-act="opt" data-id="' + e.id + '" data-k="' + j + '">' + esc(o) + '</button>').join('') + '</div><div class="res" id="res-' + e.id + '"></div></section>';
+          }
           return '<section class="ex' + (d ? ' done' : '') + '" id="ex-' + e.id.replace('.', '-') + '"><h3><span class="chk">' + (d ? '✓' : (k + 1)) + '</span> ' + md(e.texto) + '</h3>' +
-            '<textarea class="sql" rows="3" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Escribe aquí tu consulta…" data-ta="' + e.id + '">' + esc(draft) + '</textarea>' +
+            '<textarea class="sql" rows="' + (e.verify ? 5 : 3) + '" spellcheck="false" autocapitalize="off" autocorrect="off" placeholder="Escribe aquí tu consulta…" data-ta="' + e.id + '">' + esc(draft) + '</textarea>' +
             '<div class="row"><button class="btn small" data-act="run" data-id="' + e.id + '">▶ Ejecutar</button><button class="btn small main" data-act="check" data-id="' + e.id + '">Revisar</button>' +
             '<button class="btn small ghost" data-act="hint" data-id="' + e.id + '">Pista</button><button class="btn small ghost" data-act="sol" data-id="' + e.id + '">Ver respuesta</button></div>' +
             '<div class="hint" id="hint-' + e.id + '" hidden></div><div class="res" id="res-' + e.id + '"></div></section>';
@@ -246,11 +271,37 @@
     const el = ev.target.closest('[data-act]'); if (!el) return;
     const act = el.dataset.act, id = el.dataset.id;
     if (act === 'tab') { location.hash = '#/l/' + route.id + '/' + el.dataset.tab; return; }
-    if (act === 'runex') { const q = ta('ex' + el.dataset.i).value; document.getElementById('exres' + el.dataset.i).innerHTML = resultHtml(exec(q), q); return; }
+    if (act === 'runex') {
+      const i = el.dataset.i, q = ta('ex' + i).value, ver = EXV[i], box = document.getElementById('exres' + i);
+      const r = exec(q);
+      if (r.ok && r.none && ver) { const r2 = exec(trimSql(q) + ';\n' + ver); box.innerHTML = '<div class="msg ok">Se ejecutó sin errores. Así quedó:</div>' + resultHtml(r2, q); }
+      else box.innerHTML = resultHtml(r, q);
+      return;
+    }
+    if (act === 'copy') {
+      const txt = COPYS[Number(el.dataset.j)];
+      const done = () => { el.textContent = '✓ ¡Copiado!'; setTimeout(() => { el.textContent = '📋 Copiar script'; }, 2000); };
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done).catch(() => { fallbackCopy(txt); done(); });
+      else { fallbackCopy(txt); done(); }
+      return;
+    }
+    if (act === 'opt') {
+      const e = ex(id), box = document.getElementById('res-' + id);
+      if (Number(el.dataset.k) === e.q.ok) {
+        box.innerHTML = '<div class="msg ok"><strong>¡Correcto!</strong><p>' + esc(e.fb) + '</p></div>';
+        if (!P.done[id]) { P.done[id] = true; save(); const sec = el.closest('.ex'); sec.classList.add('done'); sec.querySelector('.chk').textContent = '✓'; }
+      } else box.innerHTML = '<div class="msg warn">Esa no es. Piénsalo otra vez y prueba con otra opción.</div>';
+      return;
+    }
     if (act === 'run' || act === 'check') {
       const q = ta(id).value.trim(), box = document.getElementById('res-' + id);
       if (!q) { box.innerHTML = '<div class="msg warn">Escribe tu consulta primero.</div>'; return; }
-      if (act === 'run') { box.innerHTML = resultHtml(exec(q), q); return; }
+      if (act === 'run') {
+        const e0 = ex(id), r = exec(q);
+        if (r.ok && r.none && e0.verify) { const r2 = exec(trimSql(q) + ';\n' + e0.verify); box.innerHTML = r2.none ? '<div class="msg warn">Se ejecutó sin errores, pero todavía no encuentro lo que pide el ejercicio. Revisa el nombre de la tabla y de las columnas.</div>' : '<div class="msg ok">Se ejecutó sin errores. Así quedó:</div>' + resultHtml(r2, q, e0); }
+        else box.innerHTML = resultHtml(r, q, e0);
+        return;
+      }
       const r = check(ex(id), q); box.innerHTML = r.html;
       if (r.good && !P.done[id]) { P.done[id] = true; save(); const sec = el.closest('.ex'); sec.classList.add('done'); sec.querySelector('.chk').textContent = '✓'; }
       return;
@@ -267,6 +318,11 @@
       document.getElementById('noteres').innerHTML = r.html;
     }
   });
+
+  function fallbackCopy(t) {
+    const x = document.createElement('textarea'); x.value = t; x.style.position = 'fixed'; x.style.opacity = '0';
+    document.body.appendChild(x); x.select(); try { document.execCommand('copy'); } catch (e) { /* ignorar */ } x.remove();
+  }
 
   /* ---------- inicio ---------- */
   render();

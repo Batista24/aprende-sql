@@ -6,14 +6,29 @@ window.SEED = [
   "(4,'Carlos',15,'3ro',65,'Santiago'),(5,'Sofía',14,'2do',88,'Bonao'),(6,'Pedro',15,'3ro',54,'La Vega'),",
   "(7,'Laura',13,'1ro',77,'Santo Domingo'),(8,'Juan',14,'2do',95,'Bonao'),(9,'Rosa',15,'3ro',82,'Santiago'),",
   "(10,'Miguel',13,'1ro',60,'La Vega'),(11,'Carmen',14,'2do',69,'Santo Domingo'),(12,'Pablo',15,'3ro',90,'Bonao'),",
-  "(13,'Elena',13,'1ro',73,'Santiago'),(14,'José',14,'2do',58,'Bonao'),(15,'Daniela',15,'3ro',79,'La Vega');"
+  "(13,'Elena',13,'1ro',73,'Santiago'),(14,'José',14,'2do',58,'Bonao'),(15,'Daniela',15,'3ro',79,'La Vega');",
+  "CREATE TABLE profesores (id INTEGER PRIMARY KEY, nombre TEXT NOT NULL);",
+  "INSERT INTO profesores VALUES (1,'Prof. Ramírez'),(2,'Prof. Gómez'),(3,'Prof. Peña');",
+  "CREATE TABLE materias (id INTEGER PRIMARY KEY, nombre TEXT NOT NULL, profesor_id INTEGER, FOREIGN KEY (profesor_id) REFERENCES profesores(id));",
+  "INSERT INTO materias VALUES (1,'Matemática',1),(2,'Lengua',2),(3,'Ciencias',3),(4,'Inglés',2);",
+  "CREATE TABLE notas (estudiante_id INTEGER, materia_id INTEGER, nota INTEGER, FOREIGN KEY (estudiante_id) REFERENCES estudiantes(id), FOREIGN KEY (materia_id) REFERENCES materias(id));",
+  "INSERT INTO notas VALUES (1,1,85),(1,2,90),(1,3,78),(2,1,72),(2,2,68),(2,3,80),(3,1,91),(3,2,88),(3,3,95),(4,1,65),(4,2,70),(5,1,88),(5,2,92),(5,3,84),(6,1,54),(6,3,60);"
 ].join('\n');
 
-window.SCHEMA = { estudiantes: ['id', 'nombre', 'edad', 'curso', 'nota', 'ciudad'] };
+window.SCHEMA = {
+  estudiantes: ['id', 'nombre', 'edad', 'curso', 'nota', 'ciudad'],
+  profesores: ['id', 'nombre'],
+  materias: ['id', 'nombre', 'profesor_id'],
+  notas: ['estudiante_id', 'materia_id', 'nota']
+};
+window.PARTES = { 1: 'Parte 1 · Consultar datos', 8: 'Parte 2 · Crear y modificar', 11: 'Parte 3 · Relaciones y diseño', 15: 'Parte 4 · MySQL de verdad' };
 
 window.KEYWORDS = ['SELECT', 'FROM', 'WHERE', 'AND', 'OR', 'NOT', 'LIKE', 'BETWEEN', 'ORDER', 'BY', 'GROUP', 'HAVING', 'LIMIT',
   'DISTINCT', 'AS', 'COUNT', 'AVG', 'MAX', 'MIN', 'SUM', 'ASC', 'DESC', 'IN', 'IS', 'NULL', 'INSERT', 'INTO', 'VALUES',
-  'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE', 'JOIN', 'ON', 'LEFT', 'INNER', 'ROUND'];
+  'UPDATE', 'SET', 'DELETE', 'CREATE', 'TABLE', 'JOIN', 'ON', 'LEFT', 'INNER', 'ROUND',
+  'ALTER', 'ADD', 'COLUMN', 'DROP', 'VARCHAR', 'INT', 'INTEGER', 'TEXT', 'DECIMAL', 'REAL', 'DATE', 'PRIMARY', 'KEY', 'FOREIGN',
+  'REFERENCES', 'UNIQUE', 'DEFAULT', 'AUTO_INCREMENT', 'OUTER', 'BOOLEAN', 'DATETIME', 'UPPER', 'LOWER', 'LENGTH', 'COALESCE',
+  'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'CONSTRAINT', 'CHECK', 'EXISTS', 'DATABASE', 'USE', 'SHOW', 'TABLES', 'DESCRIBE'];
 
 window.LECCIONES = [
   {
